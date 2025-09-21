@@ -1,0 +1,1 @@
+# Esquemas para la comunicacion con el Frontend
