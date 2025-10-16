@@ -1,9 +1,11 @@
 import os
 import struct
 
+
 BUCKET_FACTOR = 3
 MAX_COLLISIONS = 1
 MAX_GLOBAL_DEPTH = 3
+
 
 class Record:
     FORMAT = 'ii20s'
@@ -108,3 +110,62 @@ class Directory:
         directory.bucket_chain = list(chains)
         
         return directory
+
+
+class ExtendibleHashing:
+    def __init__(self, dir_file: str = "directory.bin", data_file: str = "datafile.bin"):
+        self.directory: Directory
+        self.dir_file = dir_file
+        self.data_file = data_file
+        self.next_bucket_pos = 0
+        if not os.path.exists(self.dir_file) or not os.path.exists(self.data_file):
+            self._initialize_files()
+        else:
+            self._load_state()
+    
+    def _hash_function(self, key:int)->tuple[str, int]:
+        hash_val = hash(key) % (2 ** self.directory.global_depth)
+        binary = bin(hash_val)[2:].zfill(self.directory.global_depth)
+        return binary, hash_val
+    
+    def _initialize_files(self):
+        self.directory = Directory()
+        
+        b1 = Bucket(local_depth=2)
+        b2 = Bucket(local_depth=2)
+
+        with open(self.data_file, 'wb') as f:
+            f.write(b1.pack())
+            f.write(b2.pack())
+        
+        self.directory.ptrs[0] = 0
+        self.directory.ptrs[1] = 1
+        self.directory.ptrs[2] = 0
+        self.directory.ptrs[3] = 1
+        
+        self.next_bucket_pos = 2
+        self._write_directory()
+    
+    def _load_state(self):
+        with open(self.dir_file, 'rb') as f:
+            data = f.read()
+        self.directory = Directory.unpack(data)
+        with open(self.data_file, 'rb') as f:
+            f.seek(0, 2)
+            file_size = f.tell()
+            self.next_bucket_pos = file_size // Bucket.SIZE_OF_BUCKET
+    
+    def _write_directory(self):
+        with open(self.dir_file, 'wb') as f:
+            f.write(self.directory.pack())
+    
+    def _read_bucket(self, bucket_pos: int) -> Bucket:
+        with open(self.data_file, 'rb') as f:
+            f.seek(bucket_pos * Bucket.SIZE_OF_BUCKET)
+            data = f.read(Bucket.SIZE_OF_BUCKET)
+            return Bucket.unpack(data)
+    
+    def _write_bucket(self, bucket_pos: int, bucket: Bucket):
+        with open(self.data_file, 'r+b') as f:
+            f.seek(bucket_pos * Bucket.SIZE_OF_BUCKET)
+            f.write(bucket.pack())
