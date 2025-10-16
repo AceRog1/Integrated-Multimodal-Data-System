@@ -1,30 +1,22 @@
 import os
 import struct
 
-BUCKET_FACTOR = 3 # El espacio real sera de 20
-MAX_COLLISIONS = 1 # max K, La cantidad maxima de buckets de overflow (El real sera de 5)
-MAX_GLOBAL_DEPTH = 3 # max D, Una vez que sobrepasa el overflow, se tiene que empezar a hacer chain de buckets (El real sera de 30 -> 1,073,741,824 de buckets sin contar overflows) 
+BUCKET_FACTOR = 3
+MAX_COLLISIONS = 1
+MAX_GLOBAL_DEPTH = 3
 
-#####
-# Pimero se expande los Buckets
-# Segundo se usa la mecanica de Overflow
-# Tercero se usa Re-Hashing (cuando se acaban los espacios de Overflow)
-#####
-
-
-# Test record -> Esto debe ser dinamico, segun que tipo de data ponga el usuario y a partir de que lo queira crear
 class Record:
-
-    FORMAT = 'i20si'
+    FORMAT = 'ii20s'
     SIZE = struct.calcsize(FORMAT)
-    def __init__(self, id:int, is_deleted:int, name:str):
+
+    def __init__(self, id: int, is_deleted: int, name: str):
         self.id = id
         self.is_deleted = is_deleted
         self.name = name
 
-    def pack(self):
+    def pack(self) -> bytes:
         return struct.pack(
-            self.FROMAT,
+            self.FORMAT,
             int(self.id),
             int(self.is_deleted),
             self.name.encode('utf-8')[:20].ljust(20, b"\x00")
@@ -33,53 +25,86 @@ class Record:
     @staticmethod
     def unpack(data):
         id, is_deleted, name = struct.unpack(Record.FORMAT, data)
-        return Record(id, is_deleted, name)
+        name_str = name.decode('utf-8').rstrip('\x00')
+        return Record(id, is_deleted, name_str)
 
 
-# Estructura del Bucket
 class Bucket:
-
-    FORMAT_HEADER = 'iiii' # size | next_bucket | overflow_chain | size
+    FORMAT_HEADER = 'iii'
     HEADER_SIZE = struct.calcsize(FORMAT_HEADER)
-    SIZE_OF_BUCKET = HEADER_SIZE + BUCKET_FACTOR*Record.SIZE
+    SIZE_OF_BUCKET = HEADER_SIZE + BUCKET_FACTOR * Record.SIZE
 
-    def __init__(self, records:Record=[], size:int=0, next_bucket:int=-1, overflow_chain:int=0):
-        self.records = records
+    def __init__(self, records: list = None, size: int = 0, next_bucket: int = -1, local_depth: int = 2):
+        self.records = records if records is not None else []
         self.size = size
         self.next_bucket = next_bucket
-        self.overflow_chain = overflow_chain
+        self.local_depth = local_depth
     
-    def pack(self)->bytes:
-        header_data = struct.pack(self.FORMAT_HEADER, self.size, self.next_bucket, self.overflow_chain)
+    def pack(self) -> bytes:
+        header_data = struct.pack(self.FORMAT_HEADER, self.size, self.next_bucket, self.local_depth)
         records_data = b''
+        
+        count = 0
         for record in self.records:
-            if record.is_deleted != True:
-                records_data += record.pack()
-        i = self.size
-        while i < BUCKET_FACTOR:
-            records_data += b'\x00' * Record.SIZE_OF_RECORD
-            i += 1
+            if count >= BUCKET_FACTOR:
+                break
+            records_data += record.pack()
+            count += 1
+        
+        while count < BUCKET_FACTOR:
+            records_data += b'\x00' * Record.SIZE
+            count += 1
+        
         return header_data + records_data
 
     @staticmethod
-    def unpack(data:bytes):
-        size, next_bucket, overflow_chain = struct.unpack(Bucket.FORMAT_HEADER, data[:Bucket.HEADER_SIZE])
+    def unpack(data: bytes):
+        size, next_bucket, local_depth = struct.unpack(Bucket.FORMAT_HEADER, data[:Bucket.HEADER_SIZE])
         records = []
         offset = Bucket.HEADER_SIZE
+        
         for i in range(size):
-            record_data = data[offset:offset+Record.SIZE]
-            records.append(Record.unpack(record_data))
-            offset += Record.SIZE_OF_RECORD
-        return Bucket(records, size, next_bucket, overflow_chain)
+            record_data = data[offset:offset + Record.SIZE]
+            if record_data != b'\x00' * Record.SIZE:
+                records.append(Record.unpack(record_data))
+            offset += Record.SIZE
+        
+        return Bucket(records, size, next_bucket, local_depth)
 
 
-# Estructura del Directory
 class Directory:
-    def __init__(self):
-        pass
+    FORMAT_HEADER = 'i'
+    HEADER_SIZE = struct.calcsize(FORMAT_HEADER)
 
+    def __init__(self, global_depth: int = 2):
+        self.global_depth = global_depth
+        self.ptrs: list[int] = [-1] * (2 ** self.global_depth)
+        self.bucket_chain: list[int] = [0] * (len(self.ptrs))
 
-# Orquestador pincipal
-class ExtendibleHashing:
-    def __init__(self):
-        pass
+    def pack(self) -> bytes:
+        header_data = struct.pack(self.FORMAT_HEADER, self.global_depth)
+        num_data = len(self.ptrs)
+        format_data = f'{num_data}i'
+        ptr_data = struct.pack(format_data, *self.ptrs)
+        chain_data = struct.pack(format_data, *self.bucket_chain)
+        return header_data + ptr_data + chain_data
+
+    @staticmethod
+    def unpack(data: bytes):
+        global_depth, = struct.unpack(Directory.FORMAT_HEADER, data[:Directory.HEADER_SIZE])
+        num_data = 2 ** global_depth
+        format_data = f'{num_data}i'
+        data_size = struct.calcsize(format_data)
+
+        offset_start = Directory.HEADER_SIZE
+        offset_end_1 = offset_start + data_size
+        offset_end_2 = offset_end_1 + data_size
+        
+        ptrs = struct.unpack(format_data, data[offset_start:offset_end_1])
+        chains = struct.unpack(format_data, data[offset_end_1:offset_end_2])
+
+        directory = Directory(global_depth)
+        directory.ptrs = list(ptrs)
+        directory.bucket_chain = list(chains)
+        
+        return directory
