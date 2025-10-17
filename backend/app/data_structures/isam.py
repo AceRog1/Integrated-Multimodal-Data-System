@@ -287,4 +287,68 @@ class ISAM2Index:
                 nxt = op.next_page
 
             print(f"{key} no encontrado para eliminar")
-            
+
+    def range_search(self, low: int, high: int) -> List[Record]:
+        if low > high:
+            low, high = high, low
+
+        results: List[Record] = []
+        with open(self.datafile, 'rb') as df:
+            with open(self.index_mid, 'rb') as fmid:
+                root = self._read_index_page(self.index_root)
+                #p.i en root
+                i_root = -1
+                for j in range(root.n):
+                    if root.keys[j] <= low:
+                        i_root = j
+                    else:
+                        break
+                start_root_pos = 1 if i_root == -1 else i_root + 1
+
+                for root_pos in range(start_root_pos, root.n + 1):
+                    mid_off = root.ptrs[root_pos]
+                    if mid_off == -1:
+                        continue
+
+                    fmid.seek(mid_off)
+                    mid = IndexPage.unpack(fmid.read(IndexPage.SIZE))
+
+                    # p.i en mid
+                    if root_pos == start_root_pos:
+                        i_mid = -1
+                        for j in range(mid.n):
+                            if mid.keys[j] <= low:
+                                i_mid = j
+                            else:
+                                break
+                        start_mid_pos = 1 if i_mid == -1 else i_mid + 1
+                    else:
+                        start_mid_pos = 1
+
+                    for mid_pos in range(start_mid_pos, mid.n + 1):
+                        base_off = mid.ptrs[mid_pos]
+                        if base_off == -1:
+                            continue
+
+                        cur_off = base_off
+                        chain_records = []
+                        while cur_off != -1:
+                            df.seek(cur_off)
+                            page = DataPage.unpack(df.read(DataPage.SIZE))
+                            for r in page.records:
+                                if not r.deleted and low <= r.key <= high:
+                                    chain_records.append(r)
+                            cur_off = page.next_page
+
+                        chain_records.sort(key=lambda r: r.key)
+                        results.extend(chain_records)
+
+                        if mid_pos < mid.n:
+                            if mid.keys[mid_pos] > high:
+                                break
+
+                    if root_pos < root.n:
+                        if root.keys[root_pos] > high:
+                            break
+
+        return results
