@@ -213,3 +213,44 @@ class ISAM2Index:
                         return r
                 nxt = page.next_page
         return None
+    
+    def insert(self, record: Record):
+        #evitar duplicados
+        if self.search(record.key):
+            print(f"Registro {record.key} ya existe.")
+            return
+
+        data_ptr = self._locate_data_page_offset(record.key)
+
+        with open(self.datafile, 'r+b') as df:
+            # cargar pagina base
+            df.seek(data_ptr)
+            base = DataPage.unpack(df.read(DataPage.SIZE))
+
+            if base.insert_sorted(record):
+                df.seek(data_ptr); df.write(base.pack())
+                print(f" Insertado {record.key} en pagina base @{data_ptr}")
+                return
+
+            # recorrer overflow 
+            prev_off = data_ptr
+            prev_page = base
+            while prev_page.next_page != -1:
+                prev_off = prev_page.next_page
+                df.seek(prev_off)
+                curr = DataPage.unpack(df.read(DataPage.SIZE))
+                if curr.insert_sorted(record):
+                    df.seek(prev_off); df.write(curr.pack())
+                    print(f"Insertado {record.key} en overflow existente @ {prev_off}")
+                    return
+                prev_page = curr
+
+            df.seek(0, os.SEEK_END)
+            new_off = df.tell()
+            new_page = DataPage([record], next_page=-1)
+            df.write(new_page.pack())
+
+            prev_page.next_page = new_off
+            df.seek(prev_off); df.write(prev_page.pack())
+            where = "base" if prev_off == data_ptr else "overflow"
+            print(f"Insertado {record.key} en nuevo overflow @ {new_off}")
