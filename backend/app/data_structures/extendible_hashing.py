@@ -338,6 +338,17 @@ class ExtendibleHashing:
                 f"No hay espacio g={self.directory.global_depth}==MAX y overflow agotado en el idx={idx}"
             )
         
+    def find(self, key: int):
+        idx = self._hash_idx(key)
+        start_pos = self.directory.ptrs[idx]
+        chain_offset = 0
+        for pos, b in self._chain_positions(start_pos):
+            for r in b.iter_active():
+                if r.id == key:
+                    return pos, chain_offset, r
+            chain_offset += 1
+        return None
+        
     def print_buckets(self, show_deleted:bool = False)->str:
         unique_positions = sorted(set(self.directory.ptrs))
         lines = []
@@ -370,3 +381,8 @@ if __name__ == "__main__":
         eh.insert(Record(k, 0, f"name{k}"))
 
     print(eh.print_buckets())
+    print(eh.find(3))
+    print(eh.find(23))
+    print(eh.find(43))
+    print(eh.find(0))
+    print(eh.find(28))
