@@ -135,3 +135,81 @@ class DataPage:
 
     def __repr__(self) -> str:
         return f"<DataPage n={len(self.records)} next={self.next_page} recs={self.records}>"
+    
+class ISAM2Index:
+    def __init__(self, base="empresa"):
+        self.index_root = base + "_index1.dat"  
+        self.index_mid  = base + "_index2.dat" 
+        self.datafile   = base + "_data.dat"    
+
+        for f in [self.index_root, self.index_mid, self.datafile]:
+            if not os.path.exists(f):
+                open(f, 'wb').close()
+
+    def _read_index_page(self, path: str, offset: int = 0) -> IndexPage:
+        with open(path, 'rb') as f:
+            f.seek(offset)
+            return IndexPage.unpack(f.read(IndexPage.SIZE))
+
+
+    def build_index(self, records: List[Record]):
+        records = sorted(records, key=lambda r: r.key)
+
+        mid_entries: List[Tuple[int, int]] = [] 
+        with open(self.datafile, 'wb') as df:
+            for i in range(0, len(records), BLOCK_FACTOR):
+                block = records[i:i + BLOCK_FACTOR]
+                page = DataPage(block, next_page=-1)
+                ptr = df.tell()
+                df.write(page.pack())
+                mid_entries.append((block[0].key, ptr))  
+
+        root_entries: List[Tuple[int, int]] = [] 
+        with open(self.index_mid, 'wb') as fmid:
+            for i in range(0, len(mid_entries), INDEX_FACTOR):
+                block = mid_entries[i:i + INDEX_FACTOR]  
+                idx_page = IndexPage()
+                idx_page.add_entry_block(block)
+                ptr_mid_page = fmid.tell()
+                fmid.write(idx_page.pack())
+                root_entries.append((block[0][0], ptr_mid_page))
+
+        with open(self.index_root, 'wb') as froot:
+            root_page = IndexPage()
+            root_page.add_entry_block(root_entries)
+            froot.write(root_page.pack())
+
+        print("indice de dos niveles listo")
+
+    #busqueda 
+    def _locate_data_page_offset(self, key: int) -> int:
+        with open(self.index_root, 'rb') as froot:
+            root = IndexPage.unpack(froot.read(IndexPage.SIZE))
+            mid_ptr = root.choose_ptr(key)
+
+        with open(self.index_mid, 'rb') as fmid:
+            fmid.seek(mid_ptr)
+            mid = IndexPage.unpack(fmid.read(IndexPage.SIZE))
+            data_ptr = mid.choose_ptr(key)
+
+        return data_ptr
+
+    def search(self, key: int) -> Optional[Record]:
+        data_ptr = self._locate_data_page_offset(key)
+
+        with open(self.datafile, 'rb') as df:
+            df.seek(data_ptr)
+            page = DataPage.unpack(df.read(DataPage.SIZE))
+            for r in page.records:
+                if r.key == key and not r.deleted:
+                    return r
+
+            nxt = page.next_page
+            while nxt != -1:
+                df.seek(nxt)
+                page = DataPage.unpack(df.read(DataPage.SIZE))
+                for r in page.records:
+                    if r.key == key and not r.deleted:
+                        return r
+                nxt = page.next_page
+        return None
