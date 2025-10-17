@@ -99,3 +99,39 @@ class IndexPage:
             pairs.append(f"P{i+1}={self.ptrs[i+1]}")
         return f"[IndexPage n={self.n} {' '.join(pairs)}]"
  
+class DataPage:
+    HEADER = '<ii'
+    SIZE = struct.calcsize(HEADER) + BLOCK_FACTOR * Record.SIZE
+
+    def __init__(self, records: Optional[List[Record]] = None, next_page: int = -1):
+        self.records: List[Record] = records if records else []
+        self.next_page = next_page
+
+    def insert_sorted(self, record: Record) -> bool:
+        if len(self.records) < BLOCK_FACTOR:
+            self.records.append(record)
+            self.records.sort(key=lambda r: r.key)
+            return True
+        return False
+
+    def pack(self) -> bytes:
+        header = struct.pack(self.HEADER, len(self.records), self.next_page)
+        body = b''.join(r.pack() for r in self.records)
+        padding = b'\x00'* ((BLOCK_FACTOR - len(self.records)) * Record.SIZE)
+        return header + body + padding
+
+    @staticmethod
+    def unpack(data: bytes) -> "DataPage":
+        if not data:
+            return DataPage([], -1)
+        n, next_page = struct.unpack(DataPage.HEADER, data[:struct.calcsize(DataPage.HEADER)])
+        records: List[Record] = []
+        off = struct.calcsize(DataPage.HEADER)
+        for _ in range(n):
+            rec_bytes = data[off:off + Record.SIZE]
+            records.append(Record.unpack(rec_bytes))
+            off += Record.SIZE
+        return DataPage(records, next_page)
+
+    def __repr__(self) -> str:
+        return f"<DataPage n={len(self.records)} next={self.next_page} recs={self.records}>"
