@@ -39,3 +39,32 @@ class Record:
         flag = " (X)" if self.deleted else ""
         return f"R(key={self.key}, nom={self.nombre!r}, cant={self.cantidad}, precio={self.precio}, fecha={self.fecha}){flag}"
 
+class IndexPage:
+    HEADER = '<i'                            
+    KEYS = f'<{INDEX_FACTOR}i'             
+    PTRS = f'<{INDEX_FACTOR + 1}i'          
+    SIZE = struct.calcsize(HEADER) + struct.calcsize(KEYS) + struct.calcsize(PTRS)
+
+    def __init__(self):
+        self.n = 0
+        self.keys = [0] * INDEX_FACTOR     
+        self.ptrs = [-1] * (INDEX_FACTOR + 1) 
+
+    def add_entry_block(self, block: List[Tuple[int, int]]):
+        if len(block) == 0:
+            self.n = 0
+            return
+        if len(block) > INDEX_FACTOR:
+            raise OverflowError("Excede INDEX_FACTOR")
+
+        # aqui tomamos la primera entrada
+        self.ptrs[0] = block[0][1]
+        for j, (k, p) in enumerate(block):
+            self.keys[j] = k
+            self.ptrs[j+1] = p
+        self.n = len(block)
+
+    def pack(self) -> bytes:
+        return struct.pack(self.HEADER, self.n) + \
+               struct.pack(self.KEYS, *self.keys) + \
+               struct.pack(self.PTRS, *self.ptrs)
