@@ -348,6 +348,153 @@ class ExtendibleHashing:
                     return pos, chain_offset, r
             chain_offset += 1
         return None
+    
+    # Funcion para verificar si es que tiene o no overflow
+    def _bucket_has_overflow(self, start_pos:int)->bool:
+        b = self._read_bucket(start_pos)
+        return b.next_bucket != -1
+
+    
+    def _repack_chain_records(self, base_pos: int, records: List[Record]): #
+        # llenar base
+        base = self._read_bucket(base_pos)
+        base.records = []
+        base.size = 0
+        i = 0
+        while i < len(records) and not base.is_full():
+            base.add_record(records[i])
+            i += 1
+        self._write_bucket(base_pos, base)
+
+        self._truncate_chain_to_base(base_pos)
+
+        tail_pos = base_pos
+        overflows = 0
+        while i < len(records) and overflows < MAX_COLLISIONS:
+            new_pos = self._create_new_bucket(local_depth=base.local_depth)
+            nb = Bucket(local_depth=base.local_depth)
+            while i < len(records) and not nb.is_full():
+                nb.add_record(records[i])
+                i += 1
+            self._write_bucket(new_pos, nb)
+
+            # enlazar
+            tail_b = self._read_bucket(tail_pos)
+            tail_b.next_bucket = new_pos
+            self._write_bucket(tail_pos, tail_b)
+            tail_pos = new_pos
+            overflows += 1
+
+        if i < len(records):
+            raise RuntimeError("Repack excede MAX_COLLISIONS ")
+
+    # compactar los registros activos de la cadena
+    def _compact_chain(self, base_pos: int):
+        all_active = self._collect_chain_records(base_pos)
+        self._repack_chain_records(base_pos, all_active)
+
+    # Nos hayuda a saber el LSB para saber con cual mergear 
+    def _buddy_index(self, dir_idx: int, local_depth: int) -> int:
+        if local_depth <= 0:
+            return dir_idx
+        return dir_idx ^ (1 << (local_depth - 1))
+
+    # Intatnar fucionar el bucket apuntado por dir_idx con su hermano (para reducir la cantidad de buckets en la estructura)
+    def _try_merge_once(self, dir_idx:int)->bool:
+        pos_a = self.directory.ptrs[dir_idx]
+        a = self._read_bucket(pos_a)
+        ld = a.local_depth
+        if ld == 0:
+            return False
+
+        buddy_idx = self._buddy_index(dir_idx, ld)
+        pos_b = self.directory.ptrs[buddy_idx]
+        if pos_b == pos_a:
+            return False
+
+        b = self._read_bucket(pos_b)
+        if a.local_depth != b.local_depth:
+            return False
+        if self._bucket_has_overflow(pos_a) or self._bucket_has_overflow(pos_b):
+            return False
+
+        a_cnt = sum(1 for _ in a.iter_active())
+        b_cnt = sum(1 for _ in b.iter_active())
+        if a_cnt + b_cnt > BUCKET_FACTOR:
+            return False
+
+        recs = list(a.iter_active()) + list(b.iter_active())
+        a.clear(); b.clear()
+        self._write_bucket(pos_a, a)
+        self._write_bucket(pos_b, b)
+
+        a.local_depth = ld - 1
+        self._write_bucket(pos_a, a) 
+        self._repack_chain_records(pos_a, recs)
+
+        new_ld = ld - 1
+        indices = get_indices_for_bucket(dir_idx, new_ld, self.directory.global_depth)
+        for i in indices:
+            self.directory.ptrs[i] = pos_a
+        self._write_directory()
+        return True
+
+    # El encogimiento del directory para evitar ocupar espacio en RAM inecesario
+    def _maybe_shrink_directory(self):
+        g = self.directory.global_depth
+        if g == 0:
+            return
+        half = 1 << (g - 1)
+
+        # Verificar mitades identicas
+        for i in range(half): 
+            if self.directory.ptrs[i] != self.directory.ptrs[i + half]:
+                return
+
+        # Verificar si es que los buckets tienen local_depth < g-1
+        seen = set(self.directory.ptrs)
+        for pos in seen:
+            b = self._read_bucket(pos)
+            if b.local_depth > g - 1:
+                return
+            
+        # Reduccion
+        self.directory.ptrs = self.directory.ptrs[:half]
+        self.directory.global_depth = g - 1
+        self._write_directory()
+
+    def delete(self, key: int) -> bool:
+        idx = self._hash_idx(key)
+        start_pos = self.directory.ptrs[idx]
+
+        #marcar
+        found = False
+        for pos, b in self._chain_positions(start_pos):
+            modified = False
+            for r in b.records:
+                if r.is_deleted == 0 and r.id == key:
+                    r.is_deleted = 1
+                    modified = True
+                    found = True
+                    break
+            if modified:
+                self._write_bucket(pos, b)
+                break
+
+        if not found:
+            return False
+
+        # compactador
+        self._compact_chain(start_pos)
+
+        #merges encadenados
+        merged = True
+        while merged:
+            merged = self._try_merge_once(idx)
+
+        #reduccion
+        self._maybe_shrink_directory()
+        return True
         
     def print_buckets(self, show_deleted:bool = False)->str:
         unique_positions = sorted(set(self.directory.ptrs))
@@ -362,7 +509,7 @@ class ExtendibleHashing:
                         items.append(f"({r.id},{r.name},{r.is_deleted})")
                     else:
                         if r.is_deleted == 0:
-                            items.append(f"({r.id},{r.name})")
+                            items.append(f"({r.id})")
                 items_str = ", ".join(items)
                 chain_str_parts.append(f"pos {cpos} (l={b.local_depth}) [ {items_str} ]")
             lines.append("  " + "  ->  ".join(chain_str_parts))
@@ -386,3 +533,8 @@ if __name__ == "__main__":
     print(eh.find(43))
     print(eh.find(0))
     print(eh.find(28))
+
+    eh.delete(3)
+    print(eh.find(3))
+    print(eh.print_buckets())
+
