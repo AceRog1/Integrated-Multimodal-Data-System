@@ -213,6 +213,23 @@ class ExtendibleHashing:
             yield pos, b
             pos = b.next_bucket
 
+    def _collect_chain_records(self, start_pos: int) -> List[Record]:
+        recs: List[Record] = []
+        for _, b in self._chain_positions(start_pos):
+            recs.extend(list(b.iter_active()))
+        return recs
+
+    def _truncate_chain_to_base(self, start_pos: int):
+        base = self._read_bucket(start_pos)
+        pos = base.next_bucket
+        while pos != -1:
+            b = self._read_bucket(pos)
+            b.clear()
+            self._write_bucket(pos, b)
+            pos = b.next_bucket
+        base.next_bucket = -1
+        self._write_bucket(start_pos, base)
+
     def _append_overflow(self, start_pos:int, record:Record)->bool:
         chain_len = 0
         last_pos = start_pos
@@ -239,7 +256,40 @@ class ExtendibleHashing:
             return ok
 
     def _split_bucket_at_index(self, dir_idx:int):
-        pass
+        bucket_pos = self.directory.ptrs[dir_idx]
+        base_bucket = self._read_bucket(bucket_pos)
+        old_ld = base_bucket.local_depth
+        new_ld = old_ld + 1
+
+        all_recs = self._collect_chain_records(bucket_pos)
+        self._truncate_chain_to_base(bucket_pos)
+
+        new_bucket_pos = self._create_new_bucket(local_depth=new_ld)
+
+        base_bucket = self._read_bucket(bucket_pos)
+        base_bucket.local_depth = new_ld
+        self._write_bucket(bucket_pos, base_bucket)
+
+        new_bucket = self._read_bucket(new_bucket_pos)
+        new_bucket.local_depth = new_ld
+        self._write_bucket(new_bucket_pos, new_bucket)
+
+        indices = get_indices_for_bucket(dir_idx, old_ld, self.directory.global_depth)
+        for idx in indices:
+            bit_is_one = ((idx >> (new_ld - 1)) & 1) == 1
+            self.directory.ptrs[idx] = new_bucket_pos if bit_is_one else bucket_pos
+        self._write_directory()
+
+        base_mem = Bucket(local_depth=new_ld)
+        bro_mem = Bucket(local_depth=new_ld)
+        for r in all_recs:
+            _, idx = hashing_funct(r.id, self.directory.global_depth)
+            bit_is_one = ((idx >> (new_ld - 1)) & 1) == 1
+            target = bro_mem if bit_is_one else base_mem
+            target.add_record(r) 
+
+        self._write_bucket(bucket_pos, base_mem)
+        self._write_bucket(new_bucket_pos, bro_mem)
 
     def _expand_directory_and_rehash(self, triggering_idx:int):
         pass
