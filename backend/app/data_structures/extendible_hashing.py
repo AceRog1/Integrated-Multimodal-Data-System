@@ -214,7 +214,29 @@ class ExtendibleHashing:
             pos = b.next_bucket
 
     def _append_overflow(self, start_pos:int, record:Record)->bool:
-        pass
+        chain_len = 0
+        last_pos = start_pos
+        last_bucket = self._read_bucket(last_pos)
+        while last_bucket.next_bucket != -1:
+            chain_len += 1
+            last_pos = last_bucket.next_bucket
+            last_bucket = self._read_bucket(last_pos)
+
+        if last_bucket.is_full():
+            if chain_len >= MAX_COLLISIONS:
+                return False
+            new_pos = self._create_new_bucket(local_depth=last_bucket.local_depth)
+            nb = Bucket(local_depth=last_bucket.local_depth)
+            nb.add_record(record)
+            self._write_bucket(new_pos, nb)
+
+            last_bucket.next_bucket = new_pos
+            self._write_bucket(last_pos, last_bucket)
+            return True
+        else:
+            ok = last_bucket.add_record(record)
+            self._write_bucket(last_pos, last_bucket)
+            return ok
 
     def _split_bucket_at_index(self, dir_idx:int):
         pass
