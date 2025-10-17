@@ -68,3 +68,14 @@ class IndexPage:
         return struct.pack(self.HEADER, self.n) + \
                struct.pack(self.KEYS, *self.keys) + \
                struct.pack(self.PTRS, *self.ptrs)
+    
+    @staticmethod
+    def unpack(data: bytes) -> "IndexPage":
+        (n,) = struct.unpack(IndexPage.HEADER, data[:struct.calcsize(IndexPage.HEADER)])
+        off = struct.calcsize(IndexPage.HEADER)
+        keys = list(struct.unpack(IndexPage.KEYS, data[off:off + struct.calcsize(IndexPage.KEYS)]))
+        off += struct.calcsize(IndexPage.KEYS)
+        ptrs = list(struct.unpack(IndexPage.PTRS, data[off:off + struct.calcsize(IndexPage.PTRS)]))
+        ip = IndexPage()
+        ip.n, ip.keys, ip.ptrs = n, keys, ptrs
+        return ip
