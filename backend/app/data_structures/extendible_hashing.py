@@ -1,10 +1,24 @@
 import os
 import struct
+from typing import List
 
 
 BUCKET_FACTOR = 3
 MAX_COLLISIONS = 1
 MAX_GLOBAL_DEPTH = 3
+
+
+def hashing_funct(key: int, D: int):
+    binary = bin(hash(key)%(2 ** D))[2:]
+    integer = int(binary, 2)
+    return binary, integer
+
+
+def get_indices_for_bucket(idx: int, local_depth: int, global_depth: int):
+    p =idx & ((1 << local_depth) - 1)            
+    step = 1<< local_depth                      
+    repeat = 1<< (global_depth - local_depth) 
+    return [p + k * step for k in range(repeat)]
 
 
 class Record:
@@ -23,9 +37,9 @@ class Record:
             int(self.is_deleted),
             self.name.encode('utf-8')[:20].ljust(20, b"\x00")
         )
-    
+
     @staticmethod
-    def unpack(data):
+    def unpack(data: bytes) -> "Record":
         id, is_deleted, name = struct.unpack(Record.FORMAT, data)
         name_str = name.decode('utf-8').rstrip('\x00')
         return Record(id, is_deleted, name_str)
@@ -41,36 +55,54 @@ class Bucket:
         self.size = size
         self.next_bucket = next_bucket
         self.local_depth = local_depth
+
+    def active_count(self)->int:
+        return sum(1 for r in self.records if r.is_deleted == 0)
+
+    def is_full(self)->bool:
+        return self.active_count()>= BUCKET_FACTOR
+
+    def add_record(self, record: Record)->bool:
+        if not self.is_full():
+            self.records.append(record)
+            self.size = len(self.records)
+            return True
+        return False
+
+    def iter_active(self):
+        for r in self.records:
+            if r.is_deleted == 0:
+                yield r
+
+    def clear(self):
+        self.records = []
+        self.size = 0
+        self.next_bucket = -1
     
     def pack(self) -> bytes:
         header_data = struct.pack(self.FORMAT_HEADER, self.size, self.next_bucket, self.local_depth)
         records_data = b''
-        
         count = 0
         for record in self.records:
             if count >= BUCKET_FACTOR:
                 break
             records_data += record.pack()
             count += 1
-        
         while count < BUCKET_FACTOR:
             records_data += b'\x00' * Record.SIZE
             count += 1
-        
         return header_data + records_data
 
     @staticmethod
     def unpack(data: bytes):
         size, next_bucket, local_depth = struct.unpack(Bucket.FORMAT_HEADER, data[:Bucket.HEADER_SIZE])
-        records = []
+        records:List[Record] = []
         offset = Bucket.HEADER_SIZE
-        
-        for i in range(size):
+        for _ in range(size):
             record_data = data[offset:offset + Record.SIZE]
             if record_data != b'\x00' * Record.SIZE:
                 records.append(Record.unpack(record_data))
             offset += Record.SIZE
-        
         return Bucket(records, size, next_bucket, local_depth)
 
 
@@ -80,38 +112,35 @@ class Directory:
 
     def __init__(self, global_depth: int = 2):
         self.global_depth = global_depth
-        self.ptrs: list[int] = [-1] * (2 ** self.global_depth)
-        self.bucket_chain: list[int] = [0] * (len(self.ptrs))
+        self.ptrs: List[int] = [-1] * (2 ** self.global_depth)
 
-    def pack(self) -> bytes:
+    def pack(self)->bytes:
         header_data = struct.pack(self.FORMAT_HEADER, self.global_depth)
-        num_data = len(self.ptrs)
-        format_data = f'{num_data}i'
-        ptr_data = struct.pack(format_data, *self.ptrs)
-        chain_data = struct.pack(format_data, *self.bucket_chain)
-        return header_data + ptr_data + chain_data
+        fmt = f'{len(self.ptrs)}i'
+        ptr_data = struct.pack(fmt, *self.ptrs)
+        return header_data + ptr_data
 
     @staticmethod
-    def unpack(data: bytes):
-        global_depth, = struct.unpack(Directory.FORMAT_HEADER, data[:Directory.HEADER_SIZE])
-        num_data = 2 ** global_depth
-        format_data = f'{num_data}i'
-        data_size = struct.calcsize(format_data)
+    def unpack(data:bytes)->"Directory":
+        (global_depth,) = struct.unpack(
+            Directory.FORMAT_HEADER, data[:Directory.HEADER_SIZE]
+        )
+        num = 2 ** global_depth
+        fmt = f'{num}i'
+        sz = struct.calcsize(fmt)
+        start = Directory.HEADER_SIZE
+        end = start + sz
+        ptrs = list(struct.unpack(fmt, data[start:end]))
+        d = Directory(global_depth)
+        d.ptrs = ptrs
+        return d
 
-        offset_start = Directory.HEADER_SIZE
-        offset_end_1 = offset_start + data_size
-        offset_end_2 = offset_end_1 + data_size
-        
-        ptrs = struct.unpack(format_data, data[offset_start:offset_end_1])
-        chains = struct.unpack(format_data, data[offset_end_1:offset_end_2])
-
-        directory = Directory(global_depth)
-        directory.ptrs = list(ptrs)
-        directory.bucket_chain = list(chains)
-        
-        return directory
+    def expand(self):
+        self.ptrs.extend(self.ptrs)
+        self.global_depth += 1
 
 
+# Orquestador
 class ExtendibleHashing:
     def __init__(self, dir_file: str = "directory.bin", data_file: str = "datafile.bin"):
         self.directory: Directory
@@ -122,11 +151,6 @@ class ExtendibleHashing:
             self._initialize_files()
         else:
             self._load_state()
-    
-    def _hash_function(self, key:int)->tuple[str, int]:
-        hash_val = hash(key) % (2 ** self.directory.global_depth)
-        binary = bin(hash_val)[2:].zfill(self.directory.global_depth)
-        return binary, hash_val
     
     def _initialize_files(self):
         self.directory = Directory()
@@ -159,13 +183,41 @@ class ExtendibleHashing:
         with open(self.dir_file, 'wb') as f:
             f.write(self.directory.pack())
     
-    def _read_bucket(self, bucket_pos: int) -> Bucket:
+    def _read_bucket(self, bucket_pos:int)->Bucket:
         with open(self.data_file, 'rb') as f:
             f.seek(bucket_pos * Bucket.SIZE_OF_BUCKET)
             data = f.read(Bucket.SIZE_OF_BUCKET)
             return Bucket.unpack(data)
     
-    def _write_bucket(self, bucket_pos: int, bucket: Bucket):
+    def _write_bucket(self, bucket_pos:int, bucket:Bucket):
         with open(self.data_file, 'r+b') as f:
             f.seek(bucket_pos * Bucket.SIZE_OF_BUCKET)
             f.write(bucket.pack())
+
+    def _create_new_bucket(self, local_depth:int)->int:
+        new_pos = self.next_bucket_pos
+        self.next_bucket_pos += 1
+        with open(self.data_file, 'ab') as f:
+            bucket = Bucket(local_depth=local_depth)
+            f.write(bucket.pack())
+        return new_pos
+    
+    def _hash_idx(self, key:int)->int:
+        _, idx = hashing_funct(key, self.directory.global_depth)
+        return idx
+
+    def _chain_positions(self, start_pos:int):
+        pos = start_pos
+        while pos != -1:
+            b = self._read_bucket(pos)
+            yield pos, b
+            pos = b.next_bucket
+
+    def _append_overflow(self, start_pos:int, record:Record)->bool:
+        pass
+
+    def _split_bucket_at_index(self, dir_idx:int):
+        pass
+
+    def _expand_directory_and_rehash(self, triggering_idx:int):
+        pass
