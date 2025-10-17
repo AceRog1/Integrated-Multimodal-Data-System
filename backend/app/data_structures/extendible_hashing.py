@@ -15,9 +15,9 @@ def hashing_funct(key: int, D: int):
 
 
 def get_indices_for_bucket(idx: int, local_depth: int, global_depth: int):
-    p =idx & ((1 << local_depth) - 1)            
-    step = 1<< local_depth                      
-    repeat = 1<< (global_depth - local_depth) 
+    p = idx&((1 << local_depth) - 1)            
+    step = 1<<local_depth                      
+    repeat = 1<<(global_depth - local_depth) 
     return [p + k * step for k in range(repeat)]
 
 
@@ -155,8 +155,8 @@ class ExtendibleHashing:
     def _initialize_files(self):
         self.directory = Directory()
         
-        b1 = Bucket(local_depth=2)
-        b2 = Bucket(local_depth=2)
+        b1 = Bucket(local_depth=1)
+        b2 = Bucket(local_depth=1)
 
         with open(self.data_file, 'wb') as f:
             f.write(b1.pack())
@@ -292,4 +292,81 @@ class ExtendibleHashing:
         self._write_bucket(new_bucket_pos, bro_mem)
 
     def _expand_directory_and_rehash(self, triggering_idx:int):
-        pass
+        self.directory.expand()
+        self._write_directory()
+
+        self._split_bucket_at_index(triggering_idx)
+
+        unique_positions = sorted(set(self.directory.ptrs))
+        overflow_records: List[Record] = []
+
+        for pos in unique_positions:
+            chain_recs = self._collect_chain_records(pos)
+            base = self._read_bucket(pos)
+            base_set = {(r.id, r.name) for r in base.iter_active()}
+            to_reinsert = [r for r in chain_recs if (r.id, r.name) not in base_set]
+            if to_reinsert:
+                self._truncate_chain_to_base(pos)
+                overflow_records.extend(to_reinsert)
+
+        for r in overflow_records:
+            self.insert(r)
+
+    def insert(self, record: Record):
+        while True:
+            idx = self._hash_idx(record.id)
+            bucket_pos = self.directory.ptrs[idx]
+            bucket = self._read_bucket(bucket_pos)
+
+            if not bucket.is_full():
+                bucket.add_record(record)
+                self._write_bucket(bucket_pos, bucket)
+                return
+
+            if bucket.local_depth < self.directory.global_depth:
+                self._split_bucket_at_index(idx)
+                continue
+
+            if self._append_overflow(bucket_pos, record):
+                return
+
+            if self.directory.global_depth < MAX_GLOBAL_DEPTH:
+                self._expand_directory_and_rehash(idx)
+                continue
+
+            raise RuntimeError(
+                f"No hay espacio g={self.directory.global_depth}==MAX y overflow agotado en el idx={idx}"
+            )
+        
+    def print_buckets(self, show_deleted:bool = False)->str:
+        unique_positions = sorted(set(self.directory.ptrs))
+        lines = []
+        lines.append("Buckets (chains):")
+        for pos in unique_positions:
+            chain_str_parts = []
+            for cpos, b in self._chain_positions(pos):
+                items = []
+                for r in b.records:
+                    if show_deleted:
+                        items.append(f"({r.id},{r.name},{r.is_deleted})")
+                    else:
+                        if r.is_deleted == 0:
+                            items.append(f"({r.id},{r.name})")
+                items_str = ", ".join(items)
+                chain_str_parts.append(f"pos {cpos} (l={b.local_depth}) [ {items_str} ]")
+            lines.append("  " + "  ->  ".join(chain_str_parts))
+        return "\n".join(lines)
+        
+
+if __name__ == "__main__":
+    for fp in ("directory.bin", "datafile.bin"):
+        if os.path.exists(fp):
+            os.remove(fp)
+
+    eh = ExtendibleHashing()
+
+    seq = [2, 3, 5, 7, 11, 17, 8, 19, 23, 28, 29, 31, 32, 36, 41, 43]
+    for k in seq:
+        eh.insert(Record(k, 0, f"name{k}"))
+
+    print(eh.print_buckets())
