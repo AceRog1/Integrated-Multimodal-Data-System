@@ -352,3 +352,54 @@ class ISAM2Index:
                             break
 
         return results
+    
+
+if __name__ == "__main__":
+    base = "empresa"
+    for f in [f"{base}_index1.dat", f"{base}_index2.dat", f"{base}_data.dat"]:
+        if os.path.exists(f):
+            os.remove(f)
+
+    isam = ISAM2Index(base)
+    registros = [
+        Record(10,"leche", 5, 2.5, "2024-09-01"),
+        Record(20,"pan", 3, 1.2, "2024-09-02"),
+        Record(30,"queso", 8, 5.0, "2024-09-03"),
+        Record(40,"yogurt", 2, 1.5, "2024-09-04"),
+        Record(50,"mantequilla", 1, 6.5, "2024-09-05"),
+        Record(60,"miel", 7, 8.0, "2024-09-06"),
+        Record(70,"jamon", 4, 4.0, "2024-09-07"),
+        Record(80,"cafe", 9, 3.5, "2024-09-08"),
+    ]
+
+    print("\nIndice ISAM")
+    isam.build_index(registros)
+
+    print("\nBusqueda")
+    for key in [10, 40, 70, 999]:
+        r = isam.search(key)
+        print(f"Buscando {key}: {'Encontrado: ' + repr(r) if r else 'No esta'}")
+
+    print("\nInserciones")
+    isam.insert(Record(85,"te", 2, 1.0, "2024-09-09"))
+    isam.insert(Record(86,"sal", 5, 2.0, "2024-09-10"))
+    isam.insert(Record(87,"pimienta", 3, 3.0, "2024-09-11"))
+    isam.insert(Record(88,"aceite", 1, 7.0, "2024-09-12"))
+
+    print("\nBusqueda por rango de 30 a 80")
+    for r in isam.range_search(30, 80):
+        print("- ", r)
+
+    print("\nPrueba remove")
+    isam.remove(40)
+    isam.remove(87)
+    isam.remove(123)
+
+    print("\nBusqueda despues de eliminacion")
+    for key in [40, 87, 85]:
+        r = isam.search(key)
+        print(f"Buscar {key}: {'ENCONTRADO - ' + repr(r) if r else 'No esta'}")
+
+    print("\nRango actualizado 10 a 90")
+    for r in isam.range_search(10, 90):
+        print("-", r)
