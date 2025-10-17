@@ -77,5 +77,25 @@ class IndexPage:
         off += struct.calcsize(IndexPage.KEYS)
         ptrs = list(struct.unpack(IndexPage.PTRS, data[off:off + struct.calcsize(IndexPage.PTRS)]))
         ip = IndexPage()
-        ip.n, ip.keys, ip.ptrs = n, keys, ptrs
+        ip.n, ip.keys, ip.ptrs= n, keys, ptrs
         return ip
+    
+    def choose_ptr(self, key: int) -> int:
+        if self.n == 0:
+            return -1
+        i = -1
+        for j in range(self.n):
+            if self.keys[j] <= key:
+                i = j
+            else:
+                break
+        return self.ptrs[0] if i == -1 else self.ptrs[i+1]
+
+    def __repr__(self) -> str:
+        pairs = []
+        pairs.append(f"P0={self.ptrs[0]}")
+        for i in range(self.n):
+            pairs.append(f"K{i+1}={self.keys[i]}")
+            pairs.append(f"P{i+1}={self.ptrs[i+1]}")
+        return f"[IndexPage n={self.n} {' '.join(pairs)}]"
+ 
