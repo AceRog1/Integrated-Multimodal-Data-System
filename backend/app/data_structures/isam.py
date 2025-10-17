@@ -214,8 +214,9 @@ class ISAM2Index:
                 nxt = page.next_page
         return None
     
+    
+    # insercion, usa overflow
     def insert(self, record: Record):
-        #evitar duplicados
         if self.search(record.key):
             print(f"Registro {record.key} ya existe.")
             return
@@ -223,16 +224,15 @@ class ISAM2Index:
         data_ptr = self._locate_data_page_offset(record.key)
 
         with open(self.datafile, 'r+b') as df:
-            # cargar pagina base
             df.seek(data_ptr)
             base = DataPage.unpack(df.read(DataPage.SIZE))
 
             if base.insert_sorted(record):
                 df.seek(data_ptr); df.write(base.pack())
-                print(f" Insertado {record.key} en pagina base @{data_ptr}")
+                print(f" Insertado {record.key} en pagina base, @ {data_ptr}")
                 return
-
-            # recorrer overflow 
+            
+            #recorremos overflow 
             prev_off = data_ptr
             prev_page = base
             while prev_page.next_page != -1:
@@ -241,7 +241,7 @@ class ISAM2Index:
                 curr = DataPage.unpack(df.read(DataPage.SIZE))
                 if curr.insert_sorted(record):
                     df.seek(prev_off); df.write(curr.pack())
-                    print(f"Insertado {record.key} en overflow existente @ {prev_off}")
+                    print(f"Insertado {record.key} en overflow existente en @ {prev_off}")
                     return
                 prev_page = curr
 
@@ -254,3 +254,37 @@ class ISAM2Index:
             df.seek(prev_off); df.write(prev_page.pack())
             where = "base" if prev_off == data_ptr else "overflow"
             print(f"Insertado {record.key} en nuevo overflow @ {new_off}")
+
+
+    def remove(self, key: int):
+        data_ptr = self._locate_data_page_offset(key)
+        with open(self.datafile, 'r+b') as df:
+            # base
+            df.seek(data_ptr)
+            page_off = data_ptr
+            page = DataPage.unpack(df.read(DataPage.SIZE))
+
+            def try_mark(off: int, p: DataPage) -> bool:
+                for r in p.records:
+                    if r.key == key and not r.deleted:
+                        r.deleted = True
+                        df.seek(off); df.write(p.pack())
+                        return True
+                return False
+
+            if try_mark(page_off, page):
+                print(f"Eliminado {key} en base @ {page_off}")
+                return
+
+            #overflow
+            nxt = page.next_page
+            while nxt != -1:
+                df.seek(nxt)
+                op = DataPage.unpack(df.read(DataPage.SIZE))
+                if try_mark(nxt, op):
+                    print(f"Eliminado {key} en overflow @ {nxt}")
+                    return
+                nxt = op.next_page
+
+            print(f"{key} no encontrado para eliminar")
+            
