@@ -168,7 +168,7 @@ class AVLFile:
             return None
         n = self.read(idx)
         if key == n.key:
-            return n.record_position  # Retornar posición del registro, no índice del nodo
+            return n.record_position
         if key < n.key:
             return self.recursive_find(n.left, key)
         return self.recursive_find(n.right, key)
@@ -234,6 +234,6 @@ class AVLFile:
         if lo < n.key:
             self.recursive_range(n.left, lo, hi, out)
         if lo <= n.key <= hi:
-            out.append(n.record_position)  # Agregar posición del registro
+            out.append(n.record_position) 
         if hi > n.key:
             self.recursive_range(n.right, lo, hi, out)
