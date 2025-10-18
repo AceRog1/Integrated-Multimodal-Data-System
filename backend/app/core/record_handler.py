@@ -1,7 +1,7 @@
 import os
 import struct
 from typing import Dict, Any, Optional, List
-from data_types import Column, DataType, serialize_value, deserialize_value
+from .data_types import Column, DataType, serialize_value, deserialize_value
 
 class RecordFile:
     def __init__(self, file_path: str, columns: List[Column]):
