@@ -1,4 +1,3 @@
-# Gestor de tablas del sistema
 import os
 import shutil
 import json
