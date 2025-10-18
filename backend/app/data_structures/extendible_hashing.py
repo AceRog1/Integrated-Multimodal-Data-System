@@ -1,15 +1,29 @@
 import os
 import struct
-from typing import List
+from typing import List, Any, Union
+from enum import Enum
 
+class KeyType(Enum):
+    INT = "int"
+    FLOAT = "float"
+    STRING = "string"
 
 BUCKET_FACTOR = 3
 MAX_COLLISIONS = 1
 MAX_GLOBAL_DEPTH = 3
 
 
-def hashing_funct(key: int, D: int):
-    binary = bin(hash(key)%(2 ** D))[2:]
+def hashing_funct(key: Any, D: int, key_type: KeyType = KeyType.INT):
+    if key_type == KeyType.INT:
+        hash_val = hash(int(key)) % (2 ** D)
+    elif key_type == KeyType.FLOAT:
+        hash_val = hash(float(key)) % (2 ** D)
+    elif key_type == KeyType.STRING:
+        hash_val = hash(str(key)) % (2 ** D)
+    else:
+        raise ValueError(f"Tipo de key no soportado: {key_type}")
+    
+    binary = bin(hash_val)[2:]
     integer = int(binary, 2)
     return binary, integer
 
@@ -21,40 +35,59 @@ def get_indices_for_bucket(idx: int, local_depth: int, global_depth: int):
     return [p + k * step for k in range(repeat)]
 
 
-class Record:
-    FORMAT = 'ii20s'
-    SIZE = struct.calcsize(FORMAT)
-
-    def __init__(self, id: int, is_deleted: int, name: str):
-        self.id = id
+class HashRecord:
+    def __init__(self, key: Any, record_position: int, is_deleted: int = 0, key_type: KeyType = KeyType.INT, max_key_length: int = 50):
+        self.key = key
+        self.record_position = record_position
         self.is_deleted = is_deleted
-        self.name = name
+        self.key_type = key_type
+        self.max_key_length = max_key_length
+        
+        # Verificar formato según tipo de key
+        if key_type == KeyType.INT:
+            self.KEY_FMT = "i"
+        elif key_type == KeyType.FLOAT:
+            self.KEY_FMT = "f"
+        elif key_type == KeyType.STRING:
+            self.KEY_FMT = f"{max_key_length}s"
+        else:
+            raise ValueError(f"Tipo de key no soportado: {key_type}")
+        
+        self.FORMAT = self.KEY_FMT + "ii"  # key + record_position + is_deleted
+        self.SIZE = struct.calcsize(self.FORMAT)
 
     def pack(self) -> bytes:
-        return struct.pack(
-            self.FORMAT,
-            int(self.id),
-            int(self.is_deleted),
-            self.name.encode('utf-8')[:20].ljust(20, b"\x00")
-        )
+        if self.key_type == KeyType.STRING:
+            key_bytes = str(self.key).encode('utf-8')[:self.max_key_length].ljust(self.max_key_length, b'\x00')
+            return struct.pack(self.FORMAT, key_bytes, self.record_position, self.is_deleted)
+        else:
+            return struct.pack(self.FORMAT, self.key, self.record_position, self.is_deleted)
 
     @staticmethod
-    def unpack(data: bytes) -> "Record":
-        id, is_deleted, name = struct.unpack(Record.FORMAT, data)
-        name_str = name.decode('utf-8').rstrip('\x00')
-        return Record(id, is_deleted, name_str)
+    def unpack(data: bytes, key_type: KeyType = KeyType.INT, max_key_length: int = 50) -> "HashRecord":
+        if key_type == KeyType.STRING:
+            key_bytes, record_position, is_deleted = struct.unpack(f"{max_key_length}sii", data)
+            key = key_bytes.decode('utf-8').rstrip('\x00')
+        else:
+            key, record_position, is_deleted = struct.unpack("iii" if key_type == KeyType.INT else "fii", data)
+        
+        return HashRecord(key, record_position, is_deleted, key_type, max_key_length)
 
 
 class Bucket:
-    FORMAT_HEADER = 'iii'
-    HEADER_SIZE = struct.calcsize(FORMAT_HEADER)
-    SIZE_OF_BUCKET = HEADER_SIZE + BUCKET_FACTOR * Record.SIZE
-
-    def __init__(self, records: list = None, size: int = 0, next_bucket: int = -1, local_depth: int = 2):
+    def __init__(self, records: list = None, size: int = 0, next_bucket: int = -1, local_depth: int = 2, key_type: KeyType = KeyType.INT, max_key_length: int = 50):
         self.records = records if records is not None else []
         self.size = size
         self.next_bucket = next_bucket
         self.local_depth = local_depth
+        self.key_type = key_type
+        self.max_key_length = max_key_length
+        
+        # Calcular tamanio dinamicamente
+        self.FORMAT_HEADER = 'iii'
+        self.HEADER_SIZE = struct.calcsize(self.FORMAT_HEADER)
+        record_size = HashRecord(0, 0, 0, key_type, max_key_length).SIZE
+        self.SIZE_OF_BUCKET = self.HEADER_SIZE + BUCKET_FACTOR * record_size
 
     def active_count(self)->int:
         return sum(1 for r in self.records if r.is_deleted == 0)
@@ -62,7 +95,7 @@ class Bucket:
     def is_full(self)->bool:
         return self.active_count()>= BUCKET_FACTOR
 
-    def add_record(self, record: Record)->bool:
+    def add_record(self, record: HashRecord)->bool:
         if not self.is_full():
             self.records.append(record)
             self.size = len(self.records)
@@ -83,27 +116,31 @@ class Bucket:
         header_data = struct.pack(self.FORMAT_HEADER, self.size, self.next_bucket, self.local_depth)
         records_data = b''
         count = 0
+        record_size = HashRecord(0, 0, 0, self.key_type, self.max_key_length).SIZE
         for record in self.records:
             if count >= BUCKET_FACTOR:
                 break
             records_data += record.pack()
             count += 1
         while count < BUCKET_FACTOR:
-            records_data += b'\x00' * Record.SIZE
+            records_data += b'\x00' * record_size
             count += 1
         return header_data + records_data
 
     @staticmethod
-    def unpack(data: bytes):
-        size, next_bucket, local_depth = struct.unpack(Bucket.FORMAT_HEADER, data[:Bucket.HEADER_SIZE])
-        records:List[Record] = []
-        offset = Bucket.HEADER_SIZE
+    def unpack(data: bytes, key_type: KeyType = KeyType.INT, max_key_length: int = 50):
+        FORMAT_HEADER = 'iii'
+        HEADER_SIZE = struct.calcsize(FORMAT_HEADER)
+        size, next_bucket, local_depth = struct.unpack(FORMAT_HEADER, data[:HEADER_SIZE])
+        records: List[HashRecord] = []
+        offset = HEADER_SIZE
+        record_size = HashRecord(0, 0, 0, key_type, max_key_length).SIZE
         for _ in range(size):
-            record_data = data[offset:offset + Record.SIZE]
-            if record_data != b'\x00' * Record.SIZE:
-                records.append(Record.unpack(record_data))
-            offset += Record.SIZE
-        return Bucket(records, size, next_bucket, local_depth)
+            record_data = data[offset:offset + record_size]
+            if record_data != b'\x00' * record_size:
+                records.append(HashRecord.unpack(record_data, key_type, max_key_length))
+            offset += record_size
+        return Bucket(records, size, next_bucket, local_depth, key_type, max_key_length)
 
 
 class Directory:
@@ -142,10 +179,12 @@ class Directory:
 
 # Orquestador
 class ExtendibleHashing:
-    def __init__(self, dir_file: str = "directory.bin", data_file: str = "datafile.bin"):
+    def __init__(self, dir_file: str = "directory.bin", data_file: str = "datafile.bin", key_type: KeyType = KeyType.INT, max_key_length: int = 50):
         self.directory: Directory
         self.dir_file = dir_file
         self.data_file = data_file
+        self.key_type = key_type
+        self.max_key_length = max_key_length
         self.next_bucket_pos = 0
         if not os.path.exists(self.dir_file) or not os.path.exists(self.data_file):
             self._initialize_files()
@@ -155,8 +194,8 @@ class ExtendibleHashing:
     def _initialize_files(self):
         self.directory = Directory()
         
-        b1 = Bucket(local_depth=1)
-        b2 = Bucket(local_depth=1)
+        b1 = Bucket(local_depth=1, key_type=self.key_type, max_key_length=self.max_key_length)
+        b2 = Bucket(local_depth=1, key_type=self.key_type, max_key_length=self.max_key_length)
 
         with open(self.data_file, 'wb') as f:
             f.write(b1.pack())
@@ -185,25 +224,27 @@ class ExtendibleHashing:
     
     def _read_bucket(self, bucket_pos:int)->Bucket:
         with open(self.data_file, 'rb') as f:
-            f.seek(bucket_pos * Bucket.SIZE_OF_BUCKET)
-            data = f.read(Bucket.SIZE_OF_BUCKET)
-            return Bucket.unpack(data)
+            # Calcular tamaño dinámicamente
+            bucket_size = Bucket(key_type=self.key_type, max_key_length=self.max_key_length).SIZE_OF_BUCKET
+            f.seek(bucket_pos * bucket_size)
+            data = f.read(bucket_size)
+            return Bucket.unpack(data, self.key_type, self.max_key_length)
     
     def _write_bucket(self, bucket_pos:int, bucket:Bucket):
         with open(self.data_file, 'r+b') as f:
-            f.seek(bucket_pos * Bucket.SIZE_OF_BUCKET)
+            f.seek(bucket_pos * bucket.SIZE_OF_BUCKET)
             f.write(bucket.pack())
 
     def _create_new_bucket(self, local_depth:int)->int:
         new_pos = self.next_bucket_pos
         self.next_bucket_pos += 1
         with open(self.data_file, 'ab') as f:
-            bucket = Bucket(local_depth=local_depth)
+            bucket = Bucket(local_depth=local_depth, key_type=self.key_type, max_key_length=self.max_key_length)
             f.write(bucket.pack())
         return new_pos
     
-    def _hash_idx(self, key:int)->int:
-        _, idx = hashing_funct(key, self.directory.global_depth)
+    def _hash_idx(self, key:Any)->int:
+        _, idx = hashing_funct(key, self.directory.global_depth, self.key_type)
         return idx
 
     def _chain_positions(self, start_pos:int):
@@ -213,8 +254,8 @@ class ExtendibleHashing:
             yield pos, b
             pos = b.next_bucket
 
-    def _collect_chain_records(self, start_pos: int) -> List[Record]:
-        recs: List[Record] = []
+    def _collect_chain_records(self, start_pos: int) -> List[HashRecord]:
+        recs: List[HashRecord] = []
         for _, b in self._chain_positions(start_pos):
             recs.extend(list(b.iter_active()))
         return recs
@@ -230,7 +271,7 @@ class ExtendibleHashing:
         base.next_bucket = -1
         self._write_bucket(start_pos, base)
 
-    def _append_overflow(self, start_pos:int, record:Record)->bool:
+    def _append_overflow(self, start_pos:int, record:HashRecord)->bool:
         chain_len = 0
         last_pos = start_pos
         last_bucket = self._read_bucket(last_pos)
@@ -243,7 +284,7 @@ class ExtendibleHashing:
             if chain_len >= MAX_COLLISIONS:
                 return False
             new_pos = self._create_new_bucket(local_depth=last_bucket.local_depth)
-            nb = Bucket(local_depth=last_bucket.local_depth)
+            nb = Bucket(local_depth=last_bucket.local_depth, key_type=self.key_type, max_key_length=self.max_key_length)
             nb.add_record(record)
             self._write_bucket(new_pos, nb)
 
@@ -280,10 +321,10 @@ class ExtendibleHashing:
             self.directory.ptrs[idx] = new_bucket_pos if bit_is_one else bucket_pos
         self._write_directory()
 
-        base_mem = Bucket(local_depth=new_ld)
-        bro_mem = Bucket(local_depth=new_ld)
+        base_mem = Bucket(local_depth=new_ld, key_type=self.key_type, max_key_length=self.max_key_length)
+        bro_mem = Bucket(local_depth=new_ld, key_type=self.key_type, max_key_length=self.max_key_length)
         for r in all_recs:
-            _, idx = hashing_funct(r.id, self.directory.global_depth)
+            _, idx = hashing_funct(r.key, self.directory.global_depth, self.key_type)
             bit_is_one = ((idx >> (new_ld - 1)) & 1) == 1
             target = bro_mem if bit_is_one else base_mem
             target.add_record(r) 
@@ -298,23 +339,24 @@ class ExtendibleHashing:
         self._split_bucket_at_index(triggering_idx)
 
         unique_positions = sorted(set(self.directory.ptrs))
-        overflow_records: List[Record] = []
+        overflow_records: List[HashRecord] = []
 
         for pos in unique_positions:
             chain_recs = self._collect_chain_records(pos)
             base = self._read_bucket(pos)
-            base_set = {(r.id, r.name) for r in base.iter_active()}
-            to_reinsert = [r for r in chain_recs if (r.id, r.name) not in base_set]
+            base_set = {(r.key, r.record_position) for r in base.iter_active()}
+            to_reinsert = [r for r in chain_recs if (r.key, r.record_position) not in base_set]
             if to_reinsert:
                 self._truncate_chain_to_base(pos)
                 overflow_records.extend(to_reinsert)
 
         for r in overflow_records:
-            self.insert(r)
+            self.insert(r.key, r.record_position)
 
-    def insert(self, record: Record):
+    def insert(self, key: Any, record_position: int):
+        record = HashRecord(key, record_position, key_type=self.key_type, max_key_length=self.max_key_length)
         while True:
-            idx = self._hash_idx(record.id)
+            idx = self._hash_idx(key)
             bucket_pos = self.directory.ptrs[idx]
             bucket = self._read_bucket(bucket_pos)
 
@@ -338,14 +380,14 @@ class ExtendibleHashing:
                 f"No hay espacio g={self.directory.global_depth}==MAX y overflow agotado en el idx={idx}"
             )
         
-    def find(self, key: int):
+    def find(self, key: Any):
         idx = self._hash_idx(key)
         start_pos = self.directory.ptrs[idx]
         chain_offset = 0
         for pos, b in self._chain_positions(start_pos):
             for r in b.iter_active():
-                if r.id == key:
-                    return pos, chain_offset, r
+                if r.key == key:
+                    return r.record_position
             chain_offset += 1
         return None
     
@@ -355,7 +397,7 @@ class ExtendibleHashing:
         return b.next_bucket != -1
 
     
-    def _repack_chain_records(self, base_pos: int, records: List[Record]): #
+    def _repack_chain_records(self, base_pos: int, records: List[HashRecord]): #
         # llenar base
         base = self._read_bucket(base_pos)
         base.records = []
@@ -372,7 +414,7 @@ class ExtendibleHashing:
         overflows = 0
         while i < len(records) and overflows < MAX_COLLISIONS:
             new_pos = self._create_new_bucket(local_depth=base.local_depth)
-            nb = Bucket(local_depth=base.local_depth)
+            nb = Bucket(local_depth=base.local_depth, key_type=self.key_type, max_key_length=self.max_key_length)
             while i < len(records) and not nb.is_full():
                 nb.add_record(records[i])
                 i += 1
@@ -463,7 +505,7 @@ class ExtendibleHashing:
         self.directory.global_depth = g - 1
         self._write_directory()
 
-    def delete(self, key: int) -> bool:
+    def delete(self, key: Any) -> bool:
         idx = self._hash_idx(key)
         start_pos = self.directory.ptrs[idx]
 
@@ -472,7 +514,7 @@ class ExtendibleHashing:
         for pos, b in self._chain_positions(start_pos):
             modified = False
             for r in b.records:
-                if r.is_deleted == 0 and r.id == key:
+                if r.is_deleted == 0 and r.key == key:
                     r.is_deleted = 1
                     modified = True
                     found = True
@@ -506,35 +548,11 @@ class ExtendibleHashing:
                 items = []
                 for r in b.records:
                     if show_deleted:
-                        items.append(f"({r.id},{r.name},{r.is_deleted})")
+                        items.append(f"({r.key},{r.record_position},{r.is_deleted})")
                     else:
                         if r.is_deleted == 0:
-                            items.append(f"({r.id})")
+                            items.append(f"({r.key})")
                 items_str = ", ".join(items)
                 chain_str_parts.append(f"pos {cpos} (l={b.local_depth}) [ {items_str} ]")
             lines.append("  " + "  ->  ".join(chain_str_parts))
         return "\n".join(lines)
-        
-
-if __name__ == "__main__":
-    for fp in ("directory.bin", "datafile.bin"):
-        if os.path.exists(fp):
-            os.remove(fp)
-
-    eh = ExtendibleHashing()
-
-    seq = [2, 3, 5, 7, 11, 17, 8, 19, 23, 28, 29, 31, 32, 36, 41, 43]
-    for k in seq:
-        eh.insert(Record(k, 0, f"name{k}"))
-
-    print(eh.print_buckets())
-    print(eh.find(3))
-    print(eh.find(23))
-    print(eh.find(43))
-    print(eh.find(0))
-    print(eh.find(28))
-
-    eh.delete(3)
-    print(eh.find(3))
-    print(eh.print_buckets())
-

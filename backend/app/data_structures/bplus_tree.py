@@ -1,6 +1,9 @@
 # bplus_tree.py
 from __future__ import annotations
 from typing import Any, List, Optional, Tuple, Dict
+import os
+import struct
+import json
 
 class BPlusNode:
     __slots__ = ("is_leaf", "keys", "children", "next_leaf")
@@ -171,9 +174,11 @@ class DataFile:
 
 
 class BPlusUnclustered:
-    def __init__(self, order: int = 8):
+    def __init__(self, order: int = 8, filename: str = "bplus_unclustered.dat"):
         self.idx = BPlusTree(order=order)
         self.heap = HeapFile()
+        self.filename = filename
+        self.metadata_file = filename.replace('.dat', '_meta.json')
 
     def clear(self) -> None:
         self.idx.clear()
@@ -198,12 +203,54 @@ class BPlusUnclustered:
         pairs = self.idx.range_search(lo, hi)
         return [self.heap.get_by_rid(rid) for _, rid in pairs]
 
+    def save(self) -> None:
+
+        metadata = {
+            "order": self.idx.order,
+            "heap_size": len(self.heap.rows)
+        }
+        with open(self.metadata_file, 'w') as f:
+            json.dump(metadata, f)
+
+        heap_file = self.filename.replace('.dat', '_heap.dat')
+        with open(heap_file, 'wb') as f:
+            f.write(struct.pack('i', len(self.heap.rows)))
+            for row in self.heap.rows:
+                row_bytes = json.dumps(row).encode('utf-8')
+                f.write(struct.pack('i', len(row_bytes)))
+                f.write(row_bytes)
+
+    def load(self) -> None:
+        if not os.path.exists(self.metadata_file):
+            return
+            
+        # Cargar metadata
+        with open(self.metadata_file, 'r') as f:
+            metadata = json.load(f)
+        
+        self.idx.order = metadata["order"]
+        
+        # Cargar heap data
+        heap_file = self.filename.replace('.dat', '_heap.dat')
+        if os.path.exists(heap_file):
+            with open(heap_file, 'rb') as f:
+                num_rows = struct.unpack('i', f.read(4))[0]
+                self.heap.rows = []
+                
+                for _ in range(num_rows):
+                    row_len = struct.unpack('i', f.read(4))[0]
+                    row_bytes = f.read(row_len)
+                    row = json.loads(row_bytes.decode('utf-8'))
+                    self.heap.rows.append(row)
+
 
 class BPlusClustered:
 
-    def __init__(self, order: int = 8):
+    def __init__(self, order: int = 8, filename: str = "bplus_clustered.dat"):
         self.idx = BPlusTree(order=order)
         self.data = DataFile()
+        self.filename = filename
+        self.metadata_file = filename.replace('.dat', '_meta.json')
 
     def clear(self) -> None:
         self.idx.clear()
@@ -230,3 +277,58 @@ class BPlusClustered:
     def range_search(self, lo: Any, hi: Any) -> List[Dict[str, Any]]:
         pairs = self.idx.range_search(lo, hi)  # [(key, pos)]
         return [self.data.get(pos)[1] for _, pos in pairs]
+
+    def save(self) -> None:
+        # Guardar metadata
+        metadata = {
+            "order": self.idx.order,
+            "data_size": len(self.data.data)
+        }
+        with open(self.metadata_file, 'w') as f:
+            json.dump(metadata, f)
+        
+        # Guardar datos
+        with open(self.filename, 'wb') as f:
+            # Escribir num de registros
+            f.write(struct.pack('i', len(self.data.data)))
+            # Escribir cada registro
+            for key, record in self.data.data:
+                key_bytes = str(key).encode('utf-8')
+                record_bytes = json.dumps(record).encode('utf-8')
+                f.write(struct.pack('i', len(key_bytes)))
+                f.write(key_bytes)
+                f.write(struct.pack('i', len(record_bytes)))
+                f.write(record_bytes)
+
+    def load(self) -> None:
+        if not os.path.exists(self.filename) or not os.path.exists(self.metadata_file):
+            return
+            
+        # Cargar metadata
+        with open(self.metadata_file, 'r') as f:
+            metadata = json.load(f)
+        
+        self.idx.order = metadata["order"]
+        
+        # Cargar datos
+        with open(self.filename, 'rb') as f:
+            num_records = struct.unpack('i', f.read(4))[0]
+            self.data.data = []
+            
+            for _ in range(num_records):
+                # Leer key
+                key_len = struct.unpack('i', f.read(4))[0]
+                key_bytes = f.read(key_len)
+                key = key_bytes.decode('utf-8')
+                
+                # Leer record
+                record_len = struct.unpack('i', f.read(4))[0]
+                record_bytes = f.read(record_len)
+                record = json.loads(record_bytes.decode('utf-8'))
+                
+                self.data.data.append((key, record))
+        
+        # Reconstruir indice
+        self.idx.clear()
+        for pos, (k, _row) in enumerate(self.data.data):
+            self.idx.add(k, pos)

@@ -1,21 +1,42 @@
 import os, struct
-from typing import List, Optional
+from typing import List, Optional, Any, Union
+from enum import Enum
+
+class KeyType(Enum):
+    INT = "int"
+    FLOAT = "float"
+    STRING = "string"
 
 class AVLNode:
-    __slots__ = ("key", "left", "right", "height")
-    def __init__(self, key: int, left: int = -1, right: int = -1, height: int = 1):
+    __slots__ = ("key", "record_position", "left", "right", "height")
+    def __init__(self, key: Any, record_position: int, left: int = -1, right: int = -1, height: int = 1):
         self.key = key
+        self.record_position = record_position
         self.left = left
         self.right = right
         self.height = height
 
 class AVLFile:
-    def __init__(self, filename: str = "avl.dat", format_str: str = "i"):
+    def __init__(self, filename: str = "avl.dat", key_type: KeyType = KeyType.INT, max_string_length: int = 50):
         self.filename = filename
-        self.FORMAT = format_str
-        self.REC_FMT = self.FORMAT + "iii"
+        self.key_type = key_type
+        self.max_string_length = max_string_length
+        
+        # Determinar formato según tipo de key
+        if key_type == KeyType.INT:
+            self.KEY_FMT = "i"
+        elif key_type == KeyType.FLOAT:
+            self.KEY_FMT = "f"
+        elif key_type == KeyType.STRING:
+            self.KEY_FMT = f"{max_string_length}s"
+        else:
+            raise ValueError(f"Tipo de key no soportado: {key_type}")
+        
+        # Formato: key + record_position + left + right + height
+        self.REC_FMT = self.KEY_FMT + "iiii"
         self.REC_SIZE = struct.calcsize(self.REC_FMT)
         self.HEADER_SIZE = struct.calcsize("i")
+        
         if not os.path.exists(filename):
             with open(filename, "wb") as f:
                 f.write(struct.pack("i", -1))
@@ -38,17 +59,29 @@ class AVLFile:
         with open(self.filename, "rb") as f:
             f.seek(self.HEADER_SIZE + index * self.REC_SIZE)
             data = f.read(self.REC_SIZE)
-            key, left, right, height = struct.unpack(self.REC_FMT, data)
-            return AVLNode(key, left, right, height)
+            if self.key_type == KeyType.STRING:
+                key_bytes, record_position, left, right, height = struct.unpack(self.REC_FMT, data)
+                key = key_bytes.decode('utf-8').rstrip('\x00')
+            else:
+                key, record_position, left, right, height = struct.unpack(self.REC_FMT, data)
+            return AVLNode(key, record_position, left, right, height)
 
     def write(self, index: int, node: AVLNode) -> None:
         with open(self.filename, "r+b") as f:
             f.seek(self.HEADER_SIZE + index * self.REC_SIZE)
-            f.write(struct.pack(self.REC_FMT, node.key, node.left, node.right, node.height))
+            if self.key_type == KeyType.STRING:
+                key_bytes = node.key.encode('utf-8')[:self.max_string_length].ljust(self.max_string_length, b'\x00')
+                f.write(struct.pack(self.REC_FMT, key_bytes, node.record_position, node.left, node.right, node.height))
+            else:
+                f.write(struct.pack(self.REC_FMT, node.key, node.record_position, node.left, node.right, node.height))
 
     def append(self, node: AVLNode) -> int:
         with open(self.filename, "ab") as f:
-            f.write(struct.pack(self.REC_FMT, node.key, node.left, node.right, node.height))
+            if self.key_type == KeyType.STRING:
+                key_bytes = node.key.encode('utf-8')[:self.max_string_length].ljust(self.max_string_length, b'\x00')
+                f.write(struct.pack(self.REC_FMT, key_bytes, node.record_position, node.left, node.right, node.height))
+            else:
+                f.write(struct.pack(self.REC_FMT, node.key, node.record_position, node.left, node.right, node.height))
         return self.size() - 1
 
     def height(self, idx: int) -> int:
@@ -91,23 +124,26 @@ class AVLFile:
         self.write(y_idx, self.height_update(y))
         return y_idx
 
-    def insert(self, key: int) -> None:
+    def insert(self, key: Any, record_position: int) -> None:
         root = self.get_root()
         if root == -1:
-            root = self.append(AVLNode(key))
+            root = self.append(AVLNode(key, record_position))
             self.set_root(root)
             return
-        self.set_root(self.recursive_insert(root, key))
+        self.set_root(self.recursive_insert(root, key, record_position))
 
-    def recursive_insert(self, idx: int, key: int) -> int:
+    def recursive_insert(self, idx: int, key: Any, record_position: int) -> int:
         if idx == -1:
-            return self.append(AVLNode(key))
+            return self.append(AVLNode(key, record_position))
         n = self.read(idx)
         if key < n.key:
-            n.left = self.recursive_insert(n.left, key)
+            n.left = self.recursive_insert(n.left, key, record_position)
         elif key > n.key:
-            n.right = self.recursive_insert(n.right, key)
+            n.right = self.recursive_insert(n.right, key, record_position)
         else:
+            # Key ya existe, actualizar record_position
+            n.record_position = record_position
+            self.write(idx, n)
             return idx
         self.write(idx, self.height_update(n))
         b = self.balance(idx)
@@ -124,26 +160,26 @@ class AVLFile:
             return self.left_rotate(idx)
         return idx  
 
-    def find(self, key: int) -> Optional[int]:
+    def find(self, key: Any) -> Optional[int]:
         return self.recursive_find(self.get_root(), key)
 
-    def recursive_find(self, idx: int, key: int) -> Optional[int]:
+    def recursive_find(self, idx: int, key: Any) -> Optional[int]:
         if idx == -1:
             return None
         n = self.read(idx)
         if key == n.key:
-            return idx
+            return n.record_position
         if key < n.key:
             return self.recursive_find(n.left, key)
         return self.recursive_find(n.right, key)
 
-    def remove(self, key: int) -> None:
+    def remove(self, key: Any) -> None:
         root = self.get_root()
         if root == -1:
             return
         self.set_root(self.recursive_remove(root, key))
 
-    def recursive_remove(self, idx: int, key: int) -> int:
+    def recursive_remove(self, idx: int, key: Any) -> int:
         if idx == -1:
             return -1
         n = self.read(idx)
@@ -186,18 +222,18 @@ class AVLFile:
             cur = self.read(idx)
         return idx
 
-    def range_search(self, min_key: int, max_key: int) -> List[int]:
+    def range_search(self, min_key: Any, max_key: Any) -> List[int]:
         out: List[int] = []
         self.recursive_range(self.get_root(), min_key, max_key, out)
         return out
 
-    def recursive_range(self, idx: int, lo: int, hi: int, out: List[int]) -> None:
+    def recursive_range(self, idx: int, lo: Any, hi: Any, out: List[int]) -> None:
         if idx == -1:
             return
         n = self.read(idx)
         if lo < n.key:
             self.recursive_range(n.left, lo, hi, out)
         if lo <= n.key <= hi:
-            out.append(n.key)
+            out.append(n.record_position) 
         if hi > n.key:
             self.recursive_range(n.right, lo, hi, out)
