@@ -1,7 +1,7 @@
 import re
 from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
-from data_types import Column, DataType
+from .data_types import Column, DataType
 
 @dataclass
 class CreateTableStatement:
