@@ -216,7 +216,8 @@ class ExtendibleHashing:
         with open(self.data_file, 'rb') as f:
             f.seek(0, 2)
             file_size = f.tell()
-            self.next_bucket_pos = file_size // Bucket.SIZE_OF_BUCKET
+            bucket_size = Bucket(key_type=self.key_type, max_key_length=self.max_key_length).SIZE_OF_BUCKET
+            self.next_bucket_pos = file_size // bucket_size
     
     def _write_directory(self):
         with open(self.dir_file, 'wb') as f:
@@ -232,7 +233,8 @@ class ExtendibleHashing:
     
     def _write_bucket(self, bucket_pos:int, bucket:Bucket):
         with open(self.data_file, 'r+b') as f:
-            f.seek(bucket_pos * bucket.SIZE_OF_BUCKET)
+            bucket_size = Bucket(key_type=self.key_type, max_key_length=self.max_key_length).SIZE_OF_BUCKET
+            f.seek(bucket_pos * bucket_size)
             f.write(bucket.pack())
 
     def _create_new_bucket(self, local_depth:int)->int:
