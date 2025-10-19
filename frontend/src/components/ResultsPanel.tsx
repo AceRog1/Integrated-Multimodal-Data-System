@@ -9,18 +9,25 @@ export function ResultsPanel({ result }: Props) {
     const [pageSize, setPageSize] = useState(25)
     const [page, setPage] = useState(1)
 
-    const total = result?.rows.length ?? 0
+    const total = result?.rows?.length ?? 0
     const pageCount = Math.max(1, Math.ceil(total / pageSize))
 
     const { slice, columns } = useMemo(() => {
-        if (!result) return { slice: [], columns: [] as string[] }
+        if (!result || !Array.isArray(result.rows)) {
+            return { slice: [] as any[][], columns: [] as string[] }
+        }
+        const safeCols = Array.isArray(result.columns) ? result.columns : []
         const start = (page - 1) * pageSize
         const end = start + pageSize
-        return { slice: result.rows.slice(start, end), columns: result.columns }
+        return { slice: result.rows.slice(start, end), columns: safeCols }
     }, [result, page, pageSize])
 
-    if (!result) return <div className="muted">Ejecuta una consulta para ver resultados</div>
-    if (!result.rows.length) return <div className="muted">Sin filas</div>
+    if (!result || !Array.isArray(result.rows)) {
+        return <div className="muted">Ejecuta una consulta para ver resultados</div>
+    }
+    if (result.rows.length === 0) {
+        return <div className="muted">Sin filas</div>
+    }
 
     return (
         <>
@@ -47,7 +54,7 @@ export function ResultsPanel({ result }: Props) {
 
             <div className="table-footer">
                 <div>
-                    Página {page} de {pageCount} — {result.rows.length} filas totales
+                    Página {page} de {pageCount} — {total} filas totales
                 </div>
                 <div className="row">
                     <label className="muted">Rows/page</label>
@@ -59,14 +66,21 @@ export function ResultsPanel({ result }: Props) {
                         value={pageSize}
                         onChange={(e) => {
                             const v = Number(e.target.value || 25)
-                            setPageSize(Math.min(200, Math.max(5, v)))
+                            const clamped = Math.min(200, Math.max(5, v))
+                            setPageSize(clamped)
                             setPage(1)
                         }}
                     />
-                    <button className="button secondary" onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                    <button
+                        className="button secondary"
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    >
                         Prev
                     </button>
-                    <button className="button" onClick={() => setPage((p) => Math.min(pageCount, p + 1))}>
+                    <button
+                        className="button"
+                        onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                    >
                         Next
                     </button>
                 </div>

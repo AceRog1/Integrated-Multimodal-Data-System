@@ -5,14 +5,10 @@ type Props = {
     onRun: (sql: string) => Promise<void> | void
 }
 
-const EXAMPLE = `-- Ejemplos:
--- select * from Restaurantes where id = 7
--- select * from Restaurantes where nombre between 'A' and 'M'
--- select * from Restaurantes where ubicacion in (point[ -12.07, -77.04 ], 5.0)
-select * from Restaurantes limit 100;`
+const PLACEHOLDER = `-- Ingresar una consulta SQL aquí`
 
 export function QueryPanel({ loading, onRun }: Props) {
-    const [sql, setSql] = useState(EXAMPLE)
+    const [sql, setSql] = useState('')
     const taRef = useRef<HTMLTextAreaElement | null>(null)
 
     useEffect(() => {
@@ -24,7 +20,7 @@ export function QueryPanel({ loading, onRun }: Props) {
             <textarea
                 ref={taRef}
                 className="query-box"
-                placeholder="Escribe tu consulta SQL-like aquí…"
+                placeholder={PLACEHOLDER}
                 value={sql}
                 onChange={(e) => setSql(e.target.value)}
             />
@@ -35,10 +31,11 @@ export function QueryPanel({ loading, onRun }: Props) {
                 <button
                     className="button secondary"
                     disabled={loading}
-                    onClick={() => setSql(EXAMPLE)}
-                    title="Cargar ejemplo"
+                    onClick={() => setSql('')}
+                    title="Limpiar"
+                    style={{ marginLeft: 8 }}
                 >
-                    Ejemplo
+                    Limpiar
                 </button>
             </div>
         </div>
