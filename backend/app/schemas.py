@@ -6,7 +6,6 @@ from datetime import datetime
 class QueryRequest(BaseModel):
     query: str
 
-
 class QueryResponse(BaseModel):
     success: bool
     data: Optional[List[Dict[str, Any]]] = None
@@ -14,7 +13,6 @@ class QueryResponse(BaseModel):
     time: float = 0.0
     error: Optional[str] = None
     explain: Optional[str] = None
-
 
 class TableInfo(BaseModel):
     name: str
