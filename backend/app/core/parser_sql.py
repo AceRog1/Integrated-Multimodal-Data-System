@@ -39,7 +39,7 @@ class SQLParser:
             re.IGNORECASE | re.DOTALL
         )
         self.insert_pattern = re.compile(
-            r'INSERT\s+INTO\s+(\w+)(?:\s*\(([^)]+)\))?\s+VALUES\s*\(([^)]+)\)',
+            r'INSERT\s+INTO\s+(\w+)(?:\s*\(([^)]+)\))?\s+VALUES\s*(\([^)]+\))',
             re.IGNORECASE
         )
         self.delete_pattern = re.compile(
@@ -198,6 +198,17 @@ class SQLParser:
     
     def _parse_value(self, value: str)->Any:
         value = value.strip()
+
+        # Parsear ARRAY[float, float]
+        if value.upper().startswith('ARRAY[') and value.endswith(']'):
+            array_content = value[6:-1]
+            # Dividir por comas y parsear como floats
+            try:
+                float_values = [float(x.strip()) for x in array_content.split(',')]
+                return float_values
+            except ValueError:
+                # Si no se puede parsear como floats, retornar como string
+                return value
         
         # Remover comillas
         if value.startswith("'") and value.endswith("'"):
@@ -293,12 +304,17 @@ class SQLParser:
         result = []
         current = ""
         paren_count = 0
+        bracket_count = 0
         for char in text:
             if char == '(':
                 paren_count += 1
             elif char == ')':
                 paren_count -= 1
-            elif char == ',' and paren_count == 0:
+            elif char == '[':
+                bracket_count += 1
+            elif char == ']':
+                bracket_count -= 1
+            elif char == ',' and paren_count == 0 and bracket_count == 0:
                 result.append(current.strip())
                 current = ""
                 continue
