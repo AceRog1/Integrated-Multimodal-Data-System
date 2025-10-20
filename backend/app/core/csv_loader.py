@@ -28,19 +28,13 @@ class CSVLoader:
         headers = csv_data[0]
         self._validate_headers(headers, create_statement.columns)
         
-        # Crear tabla
-        table = table_manager.create_table(
-            name=create_statement.table_name,
-            columns=create_statement.columns,
-            primary_key=create_statement.primary_key,
-            primary_index_type=create_statement.primary_index_type
-        )
+        table = table_manager.get_table(create_statement.table_name)
+        if not table:
+            raise ValueError(f"Tabla '{create_statement.table_name}' no encontrada. Debe ser creada primero.")
         
-        # record_handler e index_manager 
-        record_file = record_handler(table.data_file_path, table.columns)
-        idx_manager = index_manager(table.name, table.columns, table.table_dir)
+        record_file = record_handler  
+        idx_manager = index_manager   
         
-        #insertamos registros
         inserted_count = 0
         error_count = 0
         errors = []
@@ -52,7 +46,6 @@ class CSVLoader:
                 idx_manager.insert(record, record_position)
                 inserted_count += 1
                 
-                #de 1000 en 1000 registros 
                 if inserted_count % 1000 == 0:
                     print(f"Registros procesados: {inserted_count} ")
                 
@@ -95,7 +88,6 @@ class CSVLoader:
         return csv_data
     
     def _validate_headers(self, csv_headers: List[str], table_columns: List[Column]) -> None:
-        # headers del csv deben coincidir con las columnas de la tabla
         table_column_names = {col.name for col in table_columns}
         csv_column_names = {header.strip() for header in csv_headers}
         
@@ -106,6 +98,11 @@ class CSVLoader:
         extra_columns = csv_column_names - table_column_names
         if extra_columns:
             print(f"Advertencia: Columnas extra en csv se ignoraran: {extra_columns}")
+        
+        required_columns = {col.name for col in table_columns if col.is_primary_key}
+        missing_required = required_columns - csv_column_names
+        if missing_required:
+            raise ValueError(f"Columnas requeridas faltantes en csv: {missing_required}")
     
     def _csv_row_to_record(self, row: List[str], headers: List[str], columns: List[Column]) -> Dict[str, Any]:
         record = {}
@@ -130,16 +127,22 @@ class CSVLoader:
         return record
     
     def _parse_csv_value(self, raw_value: str, column: Column) -> Any:
-        if not raw_value:
+        if not raw_value or raw_value.strip() == '' or raw_value.upper() == '\\N' or raw_value.upper() == 'NULL':
             return None
         
-        #parseamos dependiendo del tipo de dato
+        raw_value = raw_value.strip()
+        
         if column.data_type == DataType.INT:
-            return int(raw_value)
+            try:
+                return int(raw_value)
+            except ValueError:
+                raise ValueError(f"Valor '{raw_value}' no es un entero válido")
         elif column.data_type == DataType.FLOAT:
-            return float(raw_value)
+            try:
+                return float(raw_value)
+            except ValueError:
+                raise ValueError(f"Valor '{raw_value}' no es un número decimal válido")
         elif column.data_type == DataType.VARCHAR:
-            # truncamos si se necesita:
             value = str(raw_value)
             if column.size and len(value) > column.size:
                 value = value[:column.size]
