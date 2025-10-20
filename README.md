@@ -233,3 +233,8 @@ El `WHERE` acepta **un solo predicado simple** (igualdad, `BETWEEN` o espacial).
 Porque el parser **elige la estructura adecuada** según la consulta, en lugar de forzar siempre el mismo camino. Además, el diseño con expresiones regulares es **simple y directo**, con rutas claras para cada sentencia, lo que evita parseos pesados y tiempos sorpresivos.
 
 ---
+
+
+## Video
+
+https://drive.google.com/drive/folders/1zZy-wkZe6r-rLZsQtibujLG5DOPg8Kvk?usp=sharing
