@@ -53,6 +53,8 @@ class SQLParser:
     
     def parse(self, sql: str)->Union[CreateTableStatement, InsertStatement, DeleteStatement, SelectStatement]:
         sql = sql.strip()
+        if sql.endswith(';'):
+            sql = sql[:-1].strip()
         if sql.upper().startswith('CREATE TABLE'):
             return self._parse_create_table(sql)
         elif sql.upper().startswith('INSERT INTO'):
@@ -198,6 +200,7 @@ class SQLParser:
     
     def _parse_value(self, value: str)->Any:
         value = value.strip()
+        print(f"DEBUG Parser: Parseando valor '{value}'")
 
         # Parsear ARRAY[float, float]
         if value.upper().startswith('ARRAY[') and value.endswith(']'):
@@ -210,20 +213,26 @@ class SQLParser:
                 # Si no se puede parsear como floats, retornar como string
                 return value
         
-        # Remover comillas
         if value.startswith("'") and value.endswith("'"):
-            return value[1:-1]
+            result = value[1:-1]
+            print(f"DEBUG Parser: Valor con comillas simples: '{result}'")
+            return result
         elif value.startswith('"') and value.endswith('"'):
-            return value[1:-1]
+            result = value[1:-1]
+            print(f"DEBUG Parser: Valor con comillas dobles: '{result}'")
+            return result
         
-        # Intentar parsear como número
         try:
             if '.' in value:
-                return float(value)
+                result = float(value)
+                print(f"DEBUG Parser: Valor parseado como float: {result}")
+                return result
             else:
-                return int(value)
+                result = int(value)
+                print(f"DEBUG Parser: Valor parseado como int: {result}")
+                return result
         except ValueError:
-            # Retornar como string
+            print(f"DEBUG Parser: Valor parseado como string: '{value}'")
             return value
     
     def _parse_delete(self, sql: str)->DeleteStatement:

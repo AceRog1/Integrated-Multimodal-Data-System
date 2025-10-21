@@ -15,7 +15,6 @@ class IndexManager:
         self.table_dir = table_dir
         self.indices: Dict[str, Any] = {} 
         
-        #directorio de indices
         self.indices_dir = os.path.join(table_dir, "indices")
         os.makedirs(self.indices_dir, exist_ok=True)
         
@@ -28,12 +27,17 @@ class IndexManager:
         return os.path.join(self.indices_dir, f"{column_name}_{index_type}")
     
     def _load_indices(self) -> None:
+        print(f"DEBUG IndexManager: Cargando índices para tabla {self.table_name}")
+        print(f"DEBUG IndexManager: Columnas: {[col.name for col in self.columns]}")
         for col in self.columns:
+            print(f"DEBUG IndexManager: Columna '{col.name}' - has_index: {col.has_index}, index_type: {col.index_type}")
             if col.has_index and col.index_type:
                 try:
                     self._load_index(col)
+                    print(f"DEBUG IndexManager: Índice cargado para '{col.name}'")
                 except Exception as e:
                     print(f"Error cargando indice en la columna '{col.name}' - {str(e)}")
+        print(f"DEBUG IndexManager: Índices finales: {list(self.indices.keys())}")
     
     def _load_index(self, column: Column) -> None:
         index_type = column.index_type.lower()
@@ -81,7 +85,6 @@ class IndexManager:
         data_file = self._get_index_filename(column.name, "hash") + "_data.bin"
         key_type_str = self._get_key_type(column)
         
-        #string a HashKeyType
         key_type_map = {
             "int": HashKeyType.INT,
             "float": HashKeyType.FLOAT,
@@ -96,7 +99,6 @@ class IndexManager:
         base_name = self._get_index_filename(column.name, "isam")
         key_type_str = self._get_key_type(column)
         
-        #string a ISAMKeyType
         key_type_map = {
             "int": ISAMKeyType.INT,
             "float": ISAMKeyType.FLOAT,
@@ -137,10 +139,7 @@ class IndexManager:
     def remove_index(self, column_name: str) -> bool:
         if column_name not in self.indices:
             return False
-        
-        # eliminar archivos de indice
-        # implementar limpieza de archivos dependiendo del indice / alejandro
-        
+                
         del self.indices[column_name]
         
         for col in self.columns:
@@ -206,9 +205,10 @@ class IndexManager:
                 results = index.search(key)
                 if results:
                     if isinstance(results[0], dict):
-                        # necesitamos obtener la posicion del registro
-                        #por ahora estamos retornando el primer resultado
-                        return 0  # TODO: mejorar esto / alejandro
+                        for result in results:
+                            if isinstance(result, dict) and result.get('key') == key:
+                                return result.get('position', 0)
+                        return results[0].get('position', 0) if isinstance(results[0], dict) else 0
                     else:
                         return results[0]
                 return None
