@@ -234,7 +234,144 @@ Porque el parser **elige la estructura adecuada** según la consulta, en lugar d
 
 ---
 
+# 3. Evaluación de Técnicas de Indexación con Dataset F1 Drivers
+
+---
+
+## 3.1. Metodología
+- **Dataset:** `data/drivers.csv` (N = 862)
+- **Esquema:**  
+  `(driverId INT, driverRef VARCHAR, number INT, code VARCHAR, forename VARCHAR, surname VARCHAR, dob DATE, nationality VARCHAR, url VARCHAR)`
+- **Tablas creadas:** `Drivers_HASH`, `Drivers_BTREE`, `Drivers_AVL`, `Drivers_ISAM`, `Drivers_SEQ`
+
+## 3.2. Creación de tablas (SQL)
+- **HASH (PK por `driverId` + hash en PK):**  
+  `CREATE TABLE Drivers_HASH (driverId INT PRIMARY KEY INDEX HASH, driverRef VARCHAR[50], number INT, code VARCHAR[10], forename VARCHAR[60], surname VARCHAR[60], dob DATE, nationality VARCHAR[40], url VARCHAR[200]) FROM FILE "data/drivers.csv";`
+
+- **B+TREE (PK por `driverId` + btree en PK):**  
+  `CREATE TABLE Drivers_BTREE (driverId INT PRIMARY KEY INDEX BTREE, driverRef VARCHAR[50], number INT, code VARCHAR[10], forename VARCHAR[60], surname VARCHAR[60], dob DATE, nationality VARCHAR[40], url VARCHAR[200]) FROM FILE "data/drivers.csv";`
+
+- **AVL (PK por `driverId` + avl en PK):**  
+  `CREATE TABLE Drivers_AVL (driverId INT PRIMARY KEY INDEX AVL, driverRef VARCHAR[50], number INT, code VARCHAR[10], forename VARCHAR[60], surname VARCHAR[60], dob DATE, nationality VARCHAR[40], url VARCHAR[200]) FROM FILE "data/drivers.csv";`
+
+- **ISAM (PK por `driverId` + isam en PK):**  
+  `CREATE TABLE Drivers_ISAM (driverId INT PRIMARY KEY INDEX ISAM, driverRef VARCHAR[50], number INT, code VARCHAR[10], forename VARCHAR[60], surname VARCHAR[60], dob DATE, nationality VARCHAR[40], url VARCHAR[200]) FROM FILE "data/drivers.csv";`
+
+- **SECUENCIAL (sin índice):**  
+  `CREATE TABLE Drivers_SEQ (driverId INT, driverRef VARCHAR[50], number INT, code VARCHAR[10], forename VARCHAR[60], surname VARCHAR[60], dob DATE, nationality VARCHAR[40], url VARCHAR[200]) FROM FILE "data/drivers.csv";`
+
+## 3.3. Consultas evaluadas
+- **Igualdad por PK:** `SELECT * FROM Drivers_<IDX> WHERE driverId = 20;`
+- **Texto exacto:** `SELECT * FROM Drivers_<IDX> WHERE surname = 'Hamilton';`
+- **Rango numérico:** `SELECT * FROM Drivers_<IDX> WHERE number BETWEEN 1 AND 50;`
+- **Rango de fecha:** `SELECT * FROM Drivers_<IDX> WHERE dob BETWEEN '1979-01-01' AND '1985-12-31';`
+- **Texto corto (código):** `SELECT * FROM Drivers_<IDX> WHERE code = 'SEN';`
+- **Mantenimiento:**  
+  - `INSERT INTO Drivers_<IDX> VALUES (999, 'new_ref', 77, 'NEW', 'New', 'Driver', '1990-01-01', 'Nowherian', 'http://example.com/new');`  
+  - `DELETE FROM Drivers_<IDX> WHERE driverId = 999;`  
+  _(Repetir para HASH/BTREE/AVL/ISAM/SEQ cambiando `<IDX>`)._
+
+## 3.4. Resultados (tiempo en ms)
+
+### 3.4.1. Carga inicial (CREATE TABLE)
+| Índice / Método | Tiempo (ms) |
+| --------------- | ----------: |
+| HASH            |       21199 |
+| B+TREE          |       16638 |
+| AVL             |      905295 |
+| ISAM            |       28299 |
+| SEQUENTIAL      |       16246 |
+
+### 3.4.2. Igualdad por PK (`driverId = 20`)
+| Índice / Método | Tiempo (ms) |
+| --------------- | ----------: |
+| HASH            |        4091 |
+| B+TREE          |        3985 |
+| AVL             |        4025 |
+| ISAM            |        4108 |
+| SEQUENTIAL      |        4000 |
+
+### 3.4.3. Igualdad texto (`surname = 'Hamilton'`)
+| Índice / Método | Tiempo (ms) |
+| --------------- | ----------: |
+| HASH            |        4037 |
+| B+TREE          |        4013 |
+| AVL             |        3760 |
+| ISAM            |        3940 |
+| SEQUENTIAL      |        4052 |
+
+### 3.4.4. Rango numérico (`number BETWEEN 1 AND 50`)
+| Índice / Método | Tiempo (ms) |
+| --------------- | ----------: |
+| HASH            |        4083 |
+| B+TREE          |        2759 |
+| AVL             |        2811 |
+| ISAM            |        2813 |
+| SEQUENTIAL      |        2925 |
+
+### 3.4.5. Rango de fecha (`dob BETWEEN '1979-01-01' AND '1985-12-31'`)
+| Índice / Método | Tiempo (ms) |
+| --------------- | ----------: |
+| HASH            |        2999 |
+| B+TREE          |        2956 |
+| AVL             |        2949 |
+| ISAM            |        3075 |
+| SEQUENTIAL      |        2961 |
+
+### 3.4.6. Igualdad código (`code = 'SEN'`)
+| Índice / Método | Tiempo (ms) |
+| --------------- | ----------: |
+| HASH            |        3153 |
+| B+TREE          |        2995 |
+| AVL             |        2969 |
+| ISAM            |        2974 |
+| SEQUENTIAL      |        2856 |
+
+### 3.4.7. Operaciones de mantenimiento
+**INSERT (1 fila)**  
+| Índice / Método | Tiempo (ms) |
+| --------------- | ----------: |
+| HASH            |          69 |
+| B+TREE          |          80 |
+| AVL             |         924 |
+| ISAM            |          83 |
+| SEQUENTIAL      |          39 |
+
+**DELETE (1 fila)**  
+| Índice / Método | Tiempo (ms) |
+| --------------- | ----------: |
+| HASH            |        3107 |
+| B+TREE          |        3568 |
+| AVL             |         910 |
+| ISAM            |        2910 |
+| SEQUENTIAL      |        2762 |
+
+## 3.5. Discusión
+- **Carga inicial:** B+Tree y Secuencial cargan más rápido que Hash e ISAM; AVL es significativamente más costoso en construcción (rotaciones y reequilibrado intensivo).
+- **Igualdad por PK:** Las diferencias entre HASH, B+Tree y AVL son pequeñas en este dataset; todos resuelven en ~4s. El hashing **no dominó** por un gran margen, lo que sugiere que el tamaño del dataset y/o efectos de caché redujeron la brecha teórica.
+- **Igualdad de texto:** AVL y B+Tree obtienen los mejores tiempos (≈3.0–3.9s), consistentes con búsquedas ordenadas. SEQ queda cerca, probablemente por tamaño moderado del dataset.
+- **Rangos (número y fecha):** B+Tree/AVL/ISAM superan a HASH (que no es óptimo para rangos). Las tres estructuras ordenadas están muy parecidas (≈2.75–3.1s), con B+Tree apenas mejor en numérico.
+- **Mantenimiento:** **INSERT** es más barato en SEQ (append) y HASH/ISAM; AVL es el más costoso (≈924 ms). **DELETE** favorece SEQ e ISAM; B+Tree es más caro por reestructuración.
+- **Conclusión operativa:**  
+  - Si predominan **consultas por igualdad** (especialmente PK) y pocas inserciones: **HASH** / **B+Tree**.  
+  - Si predominan **rangos** y lecturas: **B+Tree** o **AVL**; **ISAM** también es buena opción cuando las inserciones son raras (lecturas rápidas, penando inserciones).  
+  - **Secuencial** es aceptable en datasets pequeños o como baseline.
+
+## 3.6. Conclusiones
+- **Recomendación por tipo de consulta:**
+  - Igualdad de clave: **HASH** o **B+Tree**.
+  - Rangos/ordenación: **B+Tree / AVL** (o **ISAM** en escenarios read-heavy y data relativamente estática).
+  - Base sin índice (SEQ): útil como control y/o para cargas rápidas con pocas consultas complejas.
+  
+## 3.7 Anexo:
+
+- En la carpeta imagenes podrá econtrar todas las capturas de los test que se realizaron para cada uno de los índices.
+
+# 4. Pruebas de uso y presentación
+
+En la demostración utilizamos la GUI (frontend en `http://localhost:5173`) para ejecutar consultas sobre `Drivers_HASH`, `Drivers_BTREE`, `Drivers_AVL`, `Drivers_ISAM` y `Drivers_SEQ`, registrando **tiempo (ms)**, **filas** y **EXPLAIN** cuando aplica. Las capturas de pantalla (inicio, listar tablas, igualdad por PK y por texto, rangos numérico/fecha, igualdad por `code`, `INSERT`, `DELETE`) se incluyen en la carpeta **`/IMAGENES`**.
 
 ## Video
 
 https://drive.google.com/drive/folders/1zZy-wkZe6r-rLZsQtibujLG5DOPg8Kvk?usp=sharing
+
