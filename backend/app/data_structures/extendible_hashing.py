@@ -539,6 +539,9 @@ class ExtendibleHashing:
         #reduccion
         self._maybe_shrink_directory()
         return True
+    
+    def save(self) -> None:
+        self._write_directory()
         
     def print_buckets(self, show_deleted:bool = False)->str:
         unique_positions = sorted(set(self.directory.ptrs))

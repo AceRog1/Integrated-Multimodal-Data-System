@@ -269,14 +269,25 @@ class QueryExecutor:
             if index_manager.has_index(column_name):
                 position = index_manager.search(column_name, value)
                 if position is not None:
-                    record_file.delete(position)
-                    deleted_count = 1
+                    record = record_file.read(position)
+                    if record:
+                        record_file.delete(position)
+                        index_manager.delete(record)
+                        deleted_count = 1
+                else:
+                    all_records = record_file.scan_all()
+                    for i, record in enumerate(all_records):
+                        if record.get(column_name) == value:
+                            record_file.delete(i)
+                            index_manager.delete(record)
+                            deleted_count += 1
             else:
                 # sequential scan
                 all_records = record_file.scan_all()
                 for i, record in enumerate(all_records):
                     if record.get(column_name) == value:
                         record_file.delete(i)
+                        index_manager.delete(record)
                         deleted_count += 1
         
         elif condition['type'] == 'between':
@@ -288,14 +299,18 @@ class QueryExecutor:
             if index_manager.has_index(column_name):
                 positions = index_manager.range_search(column_name, min_value, max_value)
                 for position in positions:
-                    record_file.delete(position)
-                    deleted_count += 1
+                    record = record_file.read(position)
+                    if record:
+                        record_file.delete(position)
+                        index_manager.delete(record)
+                        deleted_count += 1
             else:
                 all_records = record_file.scan_all()
                 for i, record in enumerate(all_records):
                     value = record.get(column_name)
                     if min_value <= value <= max_value:
                         record_file.delete(i)
+                        index_manager.delete(record)
                         deleted_count += 1
         
         return deleted_count
@@ -305,7 +320,10 @@ class QueryExecutor:
         
         # marcar como eliminados
         for i in range(count):
-            record_file.delete(i)
+            record = record_file.read(i)
+            if record:
+                record_file.delete(i)
+                index_manager.delete(record)
         
         return count
     
@@ -316,17 +334,10 @@ class QueryExecutor:
             column_name = condition['column']
             value = condition['value']
             
-            if index_manager.has_index(column_name):
-                position = index_manager.search(column_name, value)
-                if position is not None:
-                    record = record_file.read(position)
-                    if record:
-                        results.append(self._project_columns(record, columns, table.columns))
-            else:
-                all_records = record_file.scan_all()
-                for record in all_records:
-                    if record.get(column_name) == value:
-                        results.append(self._project_columns(record, columns, table.columns))
+            all_records = record_file.scan_all()
+            for record in all_records:
+                if record.get(column_name) == value:
+                    results.append(self._project_columns(record, columns, table.columns))
         
         elif condition['type'] == 'between':
             # WHERE col BETWEEN min AND max
@@ -334,18 +345,11 @@ class QueryExecutor:
             min_value = condition['min_value']
             max_value = condition['max_value']
             
-            if index_manager.has_index(column_name):
-                positions = index_manager.range_search(column_name, min_value, max_value)
-                for position in positions:
-                    record = record_file.read(position)
-                    if record:
-                        results.append(self._project_columns(record, columns, table.columns))
-            else:
-                all_records = record_file.scan_all()
-                for record in all_records:
-                    value = record.get(column_name)
-                    if min_value <= value <= max_value:
-                        results.append(self._project_columns(record, columns, table.columns))
+            all_records = record_file.scan_all()
+            for record in all_records:
+                value = record.get(column_name)
+                if value is not None and min_value <= value <= max_value:
+                    results.append(self._project_columns(record, columns, table.columns))
         
         elif condition['type'] == 'spatial':
             # WHERE col IN (point, radius)
